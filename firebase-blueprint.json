@@ -1,0 +1,517 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "App users (Captain, Admin, Owner)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "admin", "captain"] },
+        "restaurantId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "active": { "type": "boolean" },
+        "phone": { "type": "string" },
+        "defaultPrinterName": { "type": "string" },
+        "printerAddress": { "type": "string" }
+      },
+      "required": ["uid", "name", "role", "email", "active"]
+    },
+    "Restaurant": {
+      "title": "Restaurant",
+      "description": "Restaurant entities",
+      "type": "object",
+      "properties": {
+        "restaurantName": { "type": "string" },
+        "restaurantCode": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "phone": { "type": "string" },
+        "gstNumber": { "type": "string" },
+        "logo": { "type": "string" },
+        "active": { "type": "boolean" },
+        "gstEnabled": { "type": "boolean" },
+        "gstPercentage": { "type": "number" },
+        "serviceChargePercentage": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantName", "restaurantCode", "ownerId", "ownerEmail", "active"]
+    },
+    "RestaurantSettings": {
+      "title": "RestaurantSettings",
+      "description": "Global restaurant settings",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" },
+        "gstEnabled": { "type": "boolean" },
+        "gstNumber": { "type": "string" },
+        "gstPercentage": { "type": "number" },
+        "serviceChargePercentage": { "type": "number" },
+        "printerConfig": { "type": "object" },
+        "kotSettings": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Restaurant-specific admins",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "restaurantName": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin"] },
+        "active": { "type": "boolean" }
+      },
+      "required": ["uid", "restaurantId", "email", "role"]
+    },
+    "Captain": {
+      "title": "Captain",
+      "description": "Restaurant-specific captains with permissions",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["captain"] },
+        "active": { "type": "boolean" },
+        "assignedTables": { "type": "array", "items": { "type": "string" } },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "canBilling": { "type": "boolean" },
+            "canDiscount": { "type": "boolean" },
+            "canPrinter": { "type": "boolean" },
+            "canCancel": { "type": "boolean" },
+            "canCancelBill": { "type": "boolean" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "restaurantId", "email", "role"]
+    },
+    "Table": {
+      "title": "Table",
+      "description": "Restaurant tables and their current status",
+      "type": "object",
+      "properties": {
+        "tableNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["available", "occupied", "running", "billed"] },
+        "currentOrderId": { "type": "string" }
+      },
+      "required": ["tableNumber", "status"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Food categories",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "image": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "Individual food items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "price": { "type": "number" },
+        "image": { "type": "string" },
+        "available": { "type": "boolean" }
+      },
+      "required": ["categoryId", "itemName", "price"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Restaurant orders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "tableId": { "type": "string" },
+        "captainName": { "type": "string" },
+        "captainId": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "items": { 
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "itemId": { "type": "string" },
+              "itemName": { "type": "string" },
+              "price": { "type": "number" },
+              "quantity": { "type": "number" }
+            }
+          }
+        },
+        "subtotal": { "type": "number" },
+        "gstAmount": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "serviceChargeAmount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "finalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "CARD", "UPI", "OTHER"] },
+        "orderStatus": { "type": "string", "enum": ["pending", "running", "billed", "completed", "cancelled", "generated", "deleted"] },
+        "kotStatus": { "type": "string", "enum": ["pending", "sent"] },
+        "paymentStatus": { "type": "string", "enum": ["paid", "unpaid"] },
+        "billed": { "type": "boolean" },
+        "billedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "orderNotes": { "type": "string" },
+        "cancellationReason": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tableNumber", "items", "orderStatus"]
+    },
+    "Bill": {
+      "title": "Bill",
+      "description": "Final bill documents",
+      "type": "object",
+      "properties": {
+        "billId": { "type": "string" },
+        "billNumber": { "type": "string" },
+        "orderId": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "tableId": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "captainId": { "type": "string" },
+        "captainName": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "gstAmount": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "serviceChargeAmount": { "type": "number" },
+        "finalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "CARD", "UPI", "MIXED", "OTHER"] },
+        "paymentStatus": { "type": "string", "enum": ["paid", "unpaid", "partial"] },
+        "paidAmount": { "type": "number" },
+        "balanceAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "settledAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["billed", "paid", "cancelled", "deleted", "generated"] },
+        "cancelledBy": { "type": "string" },
+        "cancelledAt": { "type": "string", "format": "date-time" },
+        "deletedBy": { "type": "string" },
+        "deletedAt": { "type": "string", "format": "date-time" },
+        "reason": { "type": "string" }
+      },
+      "required": ["billNumber", "orderId", "restaurantId", "tableId", "tableNumber", "captainId", "captainName", "finalAmount", "createdAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Restaurant expenses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string", "enum": ["Staff Salary", "Grocery", "Gas", "Electricity", "Maintenance", "Misc"] },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "notes": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["restaurantId", "title", "category", "amount", "date"]
+    },
+    "DayReport": {
+      "title": "DayReport",
+      "description": "Daily/Shift closing reports",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "date": { "type": "string" },
+        "openingTime": { "type": "string", "format": "date-time" },
+        "closingTime": { "type": "string", "format": "date-time" },
+        "totalSales": { "type": "number" },
+        "cashSales": { "type": "number" },
+        "cardSales": { "type": "number" },
+        "upiSales": { "type": "number" },
+        "totalExpenses": { "type": "number" },
+        "totalDiscounts": { "type": "number" },
+        "totalGst": { "type": "number" },
+        "pendingBills": { "type": "number" },
+        "cancelledBills": { "type": "number" },
+        "netProfit": { "type": "number" },
+        "totalOrders": { "type": "number" },
+        "captainSales": { "type": "object" },
+        "status": { "type": "string", "enum": ["open", "closed"] },
+        "closedBy": { "type": "string" }
+      },
+      "required": ["restaurantId", "date", "status"]
+    },
+    "CancellationLog": {
+      "title": "CancellationLog",
+      "description": "Log of all deletions and cancellations",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "itemId": { "type": "string" },
+        "cancelledQuantity": { "type": "number" },
+        "originalQuantity": { "type": "number" },
+        "cancelledByName": { "type": "string" },
+        "cancelledById": { "type": "string" },
+        "cancelledByRole": { "type": "string" },
+        "cancellationReason": { "type": "string" },
+        "cancellationType": { "type": "string", "enum": ["Item Cancel", "Full Order Cancel", "Bill Void", "Quantity Reduce", "Admin Cancel", "Captain Cancel"] },
+        "cancellationTime": { "type": "string", "format": "date-time" },
+        "orderTotalBefore": { "type": "number" },
+        "orderTotalAfter": { "type": "number" },
+        "deviceInfo": { "type": "string" }
+      },
+      "required": ["restaurantId", "cancellationType", "cancellationTime"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Individual payment transactions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "billId": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["CASH", "CARD", "UPI"] },
+        "transactionId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["billId", "restaurantId", "amount", "method", "timestamp"]
+    },
+    "BillingConfiguration": {
+      "title": "BillingConfiguration",
+      "description": "Configuration for printing and bill display",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" },
+        "restaurantName": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "website": { "type": "string" },
+        "gstNumber": { "type": "string" },
+        "fssaiNumber": { "type": "string" },
+        "footerMessage": { "type": "string" },
+        "thankYouMessage": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "qrCodeUrl": { "type": "string" },
+        "upiId": { "type": "string" },
+        "showLogo": { "type": "boolean" },
+        "showGst": { "type": "boolean" },
+        "showItemTax": { "type": "boolean" },
+        "showCaptainName": { "type": "boolean" },
+        "showTableName": { "type": "boolean" },
+        "showQrCode": { "type": "boolean" },
+        "showUpiQr": { "type": "boolean" },
+        "showCustomerCopy": { "type": "boolean" },
+        "showKitchenCopy": { "type": "boolean" },
+        "paperWidth": { "type": "string", "enum": ["58mm", "80mm"] },
+        "fontSize": { "type": "string", "enum": ["small", "medium", "large"] },
+        "margin": { "type": "number" },
+        "autoCut": { "type": "boolean" },
+        "boldHeadings": { "type": "boolean" },
+        "gstPercentage": { "type": "number" },
+        "isGstInclusive": { "type": "boolean" },
+        "serviceChargePercentage": { "type": "number" },
+        "billNumberPrefix": { "type": "string" },
+        "billNumberPattern": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Multi-branch restaurant locations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "branchName": { "type": "string" },
+        "branchCode": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "phone": { "type": "string" },
+        "managerId": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "branchName", "branchCode", "active"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Raw materials and stock items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string", "enum": ["kg", "ltr", "pcs", "gm", "ml", "pack"] },
+        "currentStock": { "type": "number" },
+        "minStockLevel": { "type": "number" },
+        "costPrice": { "type": "number" },
+        "lastPurchasedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "name", "unit", "currentStock"]
+    },
+    "Recipe": {
+      "title": "Recipe",
+      "description": "Recipe mapping for menu items to deduct stock",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "menuItemId": { "type": "string" },
+        "ingredients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "inventoryItemId": { "type": "string" },
+              "quantity": { "type": "number" }
+            }
+          }
+        }
+      },
+      "required": ["menuItemId", "ingredients"]
+    },
+    "Vendor": {
+      "title": "Vendor",
+      "description": "Suppliers and vendors",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "name": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "categories": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["restaurantId", "name", "phone"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Stock purchase entries",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "inventoryItemId": { "type": "string" },
+              "quantity": { "type": "number" },
+              "unitPrice": { "type": "number" }
+            }
+          }
+        },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "ordered", "received", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "receivedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "vendorId", "items", "status"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer database for CRM",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "loyaltyPoints": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "visitCount": { "type": "number" },
+        "birthday": { "type": "string" },
+        "lastVisit": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "name", "phone"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount coupons and offers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "code": { "type": "string" },
+        "type": { "type": "string", "enum": ["percentage", "fixed"] },
+        "value": { "type": "number" },
+        "minOrderAmount": { "type": "number" },
+        "maxDiscount": { "type": "number" },
+        "expiryDate": { "type": "string", "format": "date-time" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["restaurantId", "code", "type", "value"]
+    },
+    "Reservation": {
+      "title": "Reservation",
+      "description": "Table reservations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "tableId": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "reservationTime": { "type": "string", "format": "date-time" },
+        "guestCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "cancelled", "completed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "customerName", "reservationTime", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users": { "schema": "User", "description": "User profiles" },
+    "restaurants": { "schema": "Restaurant", "description": "Restaurant data" },
+    "admins": { "schema": "Admin", "description": "Restaurant admins" },
+    "captains": { "schema": "Captain", "description": "Restaurant captains" },
+    "tables": { "schema": "Table", "description": "Table monitoring" },
+    "categories": { "schema": "Category", "description": "Menu categories" },
+    "menuItems": { "schema": "MenuItem", "description": "Menu items" },
+    "orders": { "schema": "Order", "description": "Order history and active orders" },
+    "bills": { "schema": "Bill", "description": "Finalized bills" },
+    "cancelledBills": { "schema": "Bill", "description": "History of cancelled bills" },
+    "deletedBills": { "schema": "Bill", "description": "Backup of deleted bills" },
+    "expenses": { "schema": "Expense", "description": "Restaurant expenses" },
+    "dayReports": { "schema": "DayReport", "description": "Daily closing reports" },
+    "payments": { "schema": "Payment", "description": "Payment transactions" },
+    "branches": { "schema": "Branch", "description": "Restaurant branches" },
+    "inventory": { "schema": "InventoryItem", "description": "Raw material stock" },
+    "recipes": { "schema": "Recipe", "description": "Item to stock mapping" },
+    "vendors": { "schema": "Vendor", "description": "Supply partners" },
+    "purchaseOrders": { "schema": "PurchaseOrder", "description": "Procurement logs" },
+    "customers": { "schema": "Customer", "description": "CRM database" },
+    "coupons": { "schema": "Coupon", "description": "Promotion system" },
+    "cancellationLogs": { "schema": "CancellationLog", "description": "Audit logs for cancellations" },
+    "billingConfigurations": { "schema": "BillingConfiguration", "description": "Restaurant-specific billing and printing settings" },
+    "reservations": { "schema": "Reservation", "description": "Table reservations" }
+  }
+}

@@ -1,0 +1,422 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // -------------------------------------------------------------------------
+    // GLOBAL HELPERS
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true || 
+        (request.auth.token.email != null && 
+          (request.auth.token.email.lower() == 'darbesh789@gmail.com' || 
+           request.auth.token.email.lower() == 'owner@captainpro.com' ||
+           request.auth.token.email.lower() == 'demo@gmail.com' ||
+           request.auth.token.email.lower() == 'admin@restopro.com')
+        )
+      );
+    }
+
+    // Static check for super-owners via email - bypassing email_verified requirement for specific dev/owner accounts
+    function isSuperOwner() {
+      return isSignedIn() && request.auth.token.email != null && (
+        request.auth.token.email.lower() == 'darbesh789@gmail.com' || 
+        request.auth.token.email.lower() == 'owner@captainpro.com' ||
+        request.auth.token.email.lower() == 'demo@gmail.com' ||
+        request.auth.token.email.lower() == 'admin@restopro.com'
+      );
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isOwner() {
+      return isSuperOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'owner');
+    }
+
+    function isAdmin() {
+      return isOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin');
+    }
+
+    function isCaptain() {
+      return isAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserData().role == 'captain' || getUserData().role == 'admin' || getUserData().role == 'owner'));
+    }
+
+    function getRestaurantId() {
+       return getUserData().get('restaurantId', '');
+    }
+
+    function belongsToRestaurant(restaurantId) {
+      return isSignedIn() && (
+        isSuperOwner() || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getRestaurantId() == restaurantId)
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // -------------------------------------------------------------------------
+    // SYSTEM CRITICAL
+    // -------------------------------------------------------------------------
+    match /test/connection {
+      allow read: if isSignedIn();
+    }
+
+    match /adminShifts/{shiftId} {
+      allow read: if isAdmin() && belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isAdmin() && belongsToRestaurant(incoming().restaurantId);
+      allow update: if isAdmin() && belongsToRestaurant(existing().restaurantId);
+      allow delete: if isAdmin();
+    }
+
+    match /dayReports/{reportId} {
+      allow read: if isAdmin() && belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isAdmin() && belongsToRestaurant(incoming().restaurantId);
+      allow update, delete: if isOwner() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // GLOBAL SAFETY NET (ALLOW DENY BY DEFAULT AT THE END)
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // RESTAURANTS COLLECTION
+    // -------------------------------------------------------------------------
+    match /restaurants/{restaurantId} {
+      function isValidRestaurant(data) {
+        return data.keys().hasAll(['restaurantName', 'restaurantCode', 'ownerId', 'ownerEmail', 'active'])
+          && data.restaurantName is string && data.restaurantName.size() > 0 && data.restaurantName.size() <= 100
+          && data.restaurantCode is string && data.restaurantCode.size() > 0 && data.restaurantCode.size() <= 20
+          && data.ownerId is string && data.ownerId.size() <= 128
+          && data.ownerEmail is string && data.ownerEmail.size() <= 100
+          && data.active is bool
+          && (data.get('phone', '') is string)
+          && (data.get('address', '') is string)
+          && (data.get('city', '') is string)
+          && (data.get('state', '') is string)
+          && (data.get('gstNumber', '') is string)
+          && (data.get('ownerName', '') is string)
+          && (data.get('logo', '') is string)
+          && (data.get('createdAt', null) is timestamp)
+          && data.keys().size() <= 30;
+      }
+
+      allow get: if belongsToRestaurant(restaurantId);
+      allow list: if isSignedIn();
+      
+      allow create: if isEmailVerified() && isValidId(restaurantId) && isValidRestaurant(incoming());
+      allow update: if isSuperOwner() || (isAdmin() && restaurantId == getRestaurantId());
+      allow delete: if isSuperOwner() || (isOwner() && request.auth.uid == existing().ownerId);
+    }
+
+    // -------------------------------------------------------------------------
+    // USERS COLLECTION (Unified Auth Profile)
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.keys().hasAll(['uid', 'name', 'email', 'role', 'active'])
+          && data.uid == userId
+          && data.name is string && data.name.size() > 0 && data.name.size() <= 50
+          && data.email is string && data.email.size() <= 100
+          && data.role in ['owner', 'admin', 'captain']
+          && data.active is bool
+          && (data.get('restaurantId', '') is string)
+          && (data.get('phone', '') is string)
+          && data.keys().size() <= 20;
+      }
+
+      allow get: if isSignedIn() && (request.auth.uid == userId || isSuperOwner() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.restaurantId == getRestaurantId()));
+      allow list: if isSuperOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.get('restaurantId', 'none') == getRestaurantId());
+      
+      allow create: if isSignedIn() && (
+        (request.auth.uid == userId && isValidUser(incoming())) ||
+        (isSuperOwner() && isValidUser(incoming())) ||
+        (isEmailVerified() && isAdmin() && isValidUser(incoming()) && incoming().get('restaurantId', 'none') == getRestaurantId() && incoming().role == 'captain')
+      );
+      allow update: if isSuperOwner() || (isEmailVerified() && (
+        (request.auth.uid == userId && incoming().role == existing().role && incoming().get('restaurantId', 'none') == existing().get('restaurantId', 'none')) ||
+        (isAdmin() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && existing().get('restaurantId', 'none') == getRestaurantId() && incoming().role != 'owner')
+      ));
+      
+      allow delete: if isSuperOwner() || (isEmailVerified() && (
+        isOwner() ||
+        (isAdmin() && existing().get('restaurantId', 'none') == getRestaurantId() && existing().role == 'captain')
+      ));
+    }
+
+    // -------------------------------------------------------------------------
+    // TABLES COLLECTION
+    // -------------------------------------------------------------------------
+    match /tables/{tableId} {
+      function isValidTable(data) {
+        return data.keys().hasAll(['tableNumber', 'status', 'currentOrderId', 'restaurantId'])
+          && data.tableNumber is string && data.tableNumber.size() <= 20
+          && data.status in ['available', 'occupied', 'running', 'billed']
+          && (data.currentOrderId == null || data.currentOrderId is string)
+          && data.restaurantId is string
+          && data.keys().size() <= 15;
+      }
+
+      allow read: if isSuperOwner() || belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId) && isValidTable(incoming());
+      allow update: if isEmailVerified() && isCaptain() && belongsToRestaurant(existing().restaurantId) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'currentOrderId', 'occupiedBy'])
+      );
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // MENU DATA (Categories & Items)
+    // -------------------------------------------------------------------------
+    match /categories/{categoryId} {
+      function isValidCategory(data) {
+        return data.keys().hasAll(['name', 'image', 'restaurantId', 'active', 'displayOrder'])
+          && data.name is string && data.name.size() > 0 && data.name.size() <= 50
+          && data.image is string && data.image.size() <= 500
+          && data.restaurantId is string
+          && data.active is bool
+          && data.displayOrder is int
+          && data.keys().size() <= 10;
+      }
+
+      allow read: if isSuperOwner() || belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId) && isValidCategory(incoming());
+      allow update: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId) && isValidCategory(incoming());
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    match /menuItems/{itemId} {
+      allow read: if isSuperOwner() || belongsToRestaurant(resource.data.restaurantId);
+      allow create, update: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId);
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // ORDERS COLLECTION
+    // -------------------------------------------------------------------------
+    match /orders/{orderId} {
+      function isValidOrder(data) {
+        return data.keys().hasAll(['tableNumber', 'tableId', 'items', 'totalAmount', 'orderStatus', 'restaurantId', 'captainId', 'captainName'])
+          && (data.get('timestamp', null) == null || data.timestamp is timestamp)
+          && (data.get('updatedAt', null) == null || data.updatedAt is timestamp)
+          && data.orderStatus in ['pending', 'running', 'billed', 'completed', 'cancelled', 'generated', 'deleted']
+          && (data.get('kotStatus', 'pending') in ['pending', 'sent'])
+          && data.items is list
+          && (data.get('subtotal', 0) is number)
+          && (data.get('billed', false) is bool)
+          && data.keys().size() <= 60;
+      }
+
+      function isOrderRunning() {
+        return existing().orderStatus == 'running' || existing().orderStatus == 'pending' || existing().orderStatus == 'generated';
+      }
+
+      function isOrderBilled() {
+        return existing().orderStatus == 'billed' || existing().orderStatus == 'generated';
+      }
+
+      allow read: if isSuperOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.get('restaurantId', 'none') == getRestaurantId());
+      allow create: if isEmailVerified() && isCaptain() && belongsToRestaurant(incoming().restaurantId) && isValidOrder(incoming());
+      
+      allow update: if isEmailVerified() && isCaptain() && belongsToRestaurant(existing().restaurantId) && isValidOrder(incoming()) && (
+        // Action: Update Items (Only if not settled)
+        (isOrderRunning() && incoming().orderStatus in ['running', 'billed', 'cancelled', 'generated'] && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['items', 'kotHistory', 'subtotal', 'totalAmount', 'orderStatus', 'kotStatus', 'orderNotes', 'updatedAt', 'cancellationReason', 'billedAt', 'lastBillId', 'gstAmount', 'discountAmount', 'serviceChargeAmount', 'finalAmount', 'billed'])) ||
+        
+        // Action: Settle Payment
+        (isOrderBilled() && incoming().orderStatus in ['completed', 'cancelled', 'billed', 'generated'] &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'paymentStatus', 'paymentMethod', 'payments', 'paidAmount', 'balanceAmount', 'completedAt', 'updatedAt', 'discountAmount', 'serviceChargeAmount', 'finalAmount', 'billed'])) ||
+
+        // Admin Override
+        isAdmin()
+      );
+
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // BILLS COLLECTION
+    // -------------------------------------------------------------------------
+    match /bills/{billId} {
+      function isValidBill(data) {
+        return data.keys().hasAll(['billNumber', 'orderId', 'restaurantId', 'tableId', 'tableNumber', 'captainId', 'captainName', 'finalAmount', 'createdAt'])
+          && data.billNumber is string
+          && data.orderId is string
+          && data.restaurantId is string
+          && data.tableId is string
+          && data.tableNumber is string
+          && data.captainId is string
+          && data.captainName is string
+          && data.finalAmount is number
+          && data.createdAt is timestamp
+          && (data.get('status', 'generated') in ['generated', 'billed', 'paid', 'cancelled', 'deleted'])
+          && data.keys().size() <= 50;
+      }
+
+      allow read: if isSuperOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.get('restaurantId', 'none') == getRestaurantId());
+      allow create: if isEmailVerified() && isCaptain() && belongsToRestaurant(incoming().restaurantId) && isValidBill(incoming());
+      allow update: if isEmailVerified() && (
+        (isCaptain() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && existing().get('restaurantId', 'none') == getRestaurantId() &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'paymentMethod', 'paidAmount', 'settledAt', 'status', 'cancelledBy', 'cancelledAt', 'reason'])) ||
+        (isAdmin() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && existing().get('restaurantId', 'none') == getRestaurantId())
+      );
+      allow delete: if isEmailVerified() && isAdmin() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && existing().get('restaurantId', 'none') == getRestaurantId();
+    }
+
+    // -------------------------------------------------------------------------
+    // CANCELLED BILLS COLLECTION
+    // -------------------------------------------------------------------------
+    match /cancelledBills/{billId} {
+      allow read: if isSignedIn() && belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isEmailVerified() && belongsToRestaurant(incoming().restaurantId);
+      allow delete: if isOwner();
+    }
+
+    // -------------------------------------------------------------------------
+    // DELETED BILLS COLLECTION
+    // -------------------------------------------------------------------------
+    match /deletedBills/{billId} {
+      allow read: if isAdmin() && belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId);
+      allow delete: if isOwner();
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPENSES COLLECTION
+    // -------------------------------------------------------------------------
+    match /expenses/{expenseId} {
+      function isValidExpense(data) {
+        return data.keys().hasAll(['restaurantId', 'title', 'category', 'amount', 'date'])
+          && data.restaurantId is string
+          && data.title is string
+          && data.category in ["Staff Salary", "Grocery", "Gas", "Electricity", "Maintenance", "Misc"]
+          && data.amount is number
+          && data.date is timestamp
+          && data.keys().size() <= 20;
+      }
+
+      allow read: if isSuperOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.get('restaurantId', 'none') == getRestaurantId());
+      allow create: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId) && isValidExpense(incoming());
+      allow update: if isEmailVerified() && isAdmin() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && existing().get('restaurantId', 'none') == getRestaurantId() && isValidExpense(incoming());
+      allow delete: if isEmailVerified() && isAdmin() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && existing().get('restaurantId', 'none') == getRestaurantId();
+    }
+
+    // -------------------------------------------------------------------------
+    // PAYMENTS COLLECTION
+    // -------------------------------------------------------------------------
+    match /payments/{paymentId} {
+      function isValidPayment(data) {
+        return data.keys().hasAll(['billId', 'restaurantId', 'amount', 'method', 'timestamp'])
+          && data.billId is string
+          && data.restaurantId is string
+          && data.amount is number
+          && data.method in ["CASH", "CARD", "UPI"]
+          && data.timestamp is timestamp
+          && data.keys().size() <= 15;
+      }
+
+      allow read: if isSuperOwner() || belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isEmailVerified() && isCaptain() && belongsToRestaurant(incoming().restaurantId) && isValidPayment(incoming());
+      allow update: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // CAPTAINS COLLECTION
+    // -------------------------------------------------------------------------
+    match /captains/{captainId} {
+      allow read: if isSuperOwner() || belongsToRestaurant(resource.data.restaurantId);
+      allow create, update, delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // ADMINS COLLECTION
+    // -------------------------------------------------------------------------
+    match /admins/{adminId} {
+      allow read: if isSuperOwner() || belongsToRestaurant(resource.data.restaurantId);
+      allow create, update, delete: if isSuperOwner() || (isOwner() && (
+        (request.method == 'create' && belongsToRestaurant(incoming().restaurantId)) ||
+        (request.method != 'create' && belongsToRestaurant(existing().restaurantId))
+      ));
+    }
+
+    // -------------------------------------------------------------------------
+    // SETTINGS COLLECTION
+    // -------------------------------------------------------------------------
+    match /settings/{settingId} {
+      allow read: if isSuperOwner() || belongsToRestaurant(resource.data.restaurantId);
+      allow create, update: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId);
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+    // -------------------------------------------------------------------------
+    // BILLING CONFIGURATION
+    // -------------------------------------------------------------------------
+    match /billingConfigurations/{configId} {
+      allow read: if isSuperOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.get('restaurantId', 'none') == getRestaurantId());
+      allow create: if isEmailVerified() && isAdmin() && belongsToRestaurant(incoming().restaurantId);
+      allow update: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // RESERVATIONS COLLECTION
+    // -------------------------------------------------------------------------
+    match /reservations/{reservationId} {
+      function isValidReservation(data) {
+        return data.keys().hasAll(['restaurantId', 'customerName', 'reservationTime', 'status', 'createdAt'])
+          && data.restaurantId is string
+          && data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100
+          && data.reservationTime is timestamp
+          && data.status in ['pending', 'confirmed', 'cancelled', 'completed']
+          && data.createdAt is timestamp
+          && (data.get('customerPhone', '') is string)
+          && (data.get('tableId', '') is string)
+          && (data.get('tableNumber', '') is string)
+          && (data.get('guestCount', 0) is number)
+          && data.keys().size() <= 15;
+      }
+
+      allow read: if isSuperOwner() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && resource.data.get('restaurantId', 'none') == getRestaurantId());
+      allow create: if isEmailVerified() && isCaptain() && belongsToRestaurant(incoming().restaurantId) && isValidReservation(incoming());
+      allow update: if isEmailVerified() && isCaptain() && belongsToRestaurant(existing().restaurantId) && isValidReservation(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reservationTime', 'customerName', 'customerPhone', 'guestCount', 'tableId', 'tableNumber'])
+      );
+      allow delete: if isEmailVerified() && isAdmin() && belongsToRestaurant(existing().restaurantId);
+    }
+
+    // -------------------------------------------------------------------------
+    // CANCELLATION LOGS COLLECTION
+    // -------------------------------------------------------------------------
+    match /cancellationLogs/{logId} {
+      function isValidLog(data) {
+        return data.keys().hasAll(['restaurantId', 'cancellationType', 'cancellationTime'])
+          && data.restaurantId is string
+          && data.cancellationType is string
+          && data.cancellationTime is timestamp
+          && data.keys().size() <= 30;
+      }
+
+      allow read: if isEmailVerified() && isAdmin() && belongsToRestaurant(resource.data.restaurantId);
+      allow create: if isEmailVerified() && belongsToRestaurant(incoming().restaurantId) && isValidLog(incoming());
+      allow update, delete: if false; // Audit logs are immutable
+    }
+  }
+}

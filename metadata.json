@@ -1,0 +1,6 @@
+{
+  "name": "RestoPro Commercial Suite",
+  "description": "Enterprise-grade Restaurant Expansion Suite. Multi-branch POS, Inventory Management, Franchise Control, AI Analytics, and Merchant Monitoring Ecosystem.",
+  "requestFramePermissions": ["camera", "geolocation", "bluetooth", "usb"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

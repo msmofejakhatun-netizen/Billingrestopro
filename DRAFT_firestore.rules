@@ -1,0 +1,210 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // -------------------------------------------------------------------------
+    // GLOBAL HELPERS
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true || 
+        request.auth.token.get('email', '').lower() == 'darbesh789@gmail.com' ||
+        request.auth.token.get('email', '').lower() == 'owner@captainpro.com'
+      );
+    }
+
+    function getUserData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function userExists(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function currentUserRole() {
+      return userExists(request.auth.uid) ? getUserData(request.auth.uid).role : 'guest';
+    }
+
+    function isOwner() {
+      return isSignedIn() && (
+        request.auth.token.get('email', '').lower() == 'darbesh789@gmail.com' ||
+        request.auth.token.get('email', '').lower() == 'owner@captainpro.com' ||
+        currentUserRole() == 'owner'
+      );
+    }
+
+    function isAdmin() {
+      return isOwner() || (isSignedIn() && currentUserRole() == 'admin');
+    }
+
+    function isCaptain() {
+      return isAdmin() || (isSignedIn() && currentUserRole() == 'captain');
+    }
+
+    function isStaff() {
+      return isCaptain();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // -------------------------------------------------------------------------
+    // GLOBAL SAFETY NET
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // USERS COLLECTION
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.keys().hasAll(['uid', 'name', 'email', 'role', 'active'])
+          && data.uid == request.auth.uid
+          && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+          && data.email is string && data.email.size() > 0
+          && data.role in ['owner', 'admin', 'captain']
+          && data.active is bool
+          && (data.get('phone', '') is string)
+          && (data.get('restaurantId', '') is string)
+          && (data.get('createdBy', '') is string)
+          && (data.get('defaultPrinterName', '') is string)
+          && (data.get('printerAddress', '') is string)
+          && data.keys().size() <= 10;
+      }
+
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId)
+                    && isValidUser(incoming())
+                    && (incoming().role == 'owner' ? (request.auth.token.email.lower() in ['darbesh789@gmail.com', 'owner@captainpro.com']) : true);
+      
+      allow update: if isSignedIn() && isValidId(userId) && (
+        // Admin can update anyone
+        (isAdmin() && isValidUser(incoming())) ||
+        // User can update their own non-role fields
+        (request.auth.uid == userId && 
+         incoming().role == existing().role && 
+         incoming().uid == existing().uid &&
+         isValidUser(incoming()) &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'active', 'defaultPrinterName', 'printerAddress']))
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // TABLES COLLECTION
+    // -------------------------------------------------------------------------
+    match /tables/{tableId} {
+      function isValidTable(data) {
+        return data.keys().hasAll(['tableNumber', 'status', 'currentOrderId'])
+          && data.tableNumber is string && data.tableNumber.size() > 0
+          && data.status in ['available', 'occupied', 'running']
+          && (data.currentOrderId == null || data.currentOrderId is string)
+          && (data.get('createdAt', request.time) is timestamp)
+          && data.keys().size() <= 5;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidId(tableId) && isValidTable(incoming());
+      allow update: if isCaptain() && isValidId(tableId) && isValidTable(incoming()) && (
+        isAdmin() || (isCaptain() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'currentOrderId']))
+      );
+      allow delete: if isAdmin() && isValidId(tableId);
+    }
+
+    // -------------------------------------------------------------------------
+    // CATEGORIES COLLECTION
+    // -------------------------------------------------------------------------
+    match /categories/{categoryId} {
+      function isValidCategory(data) {
+        return data.keys().hasAll(['name', 'image'])
+          && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+          && data.image is string && data.image.size() <= 2000
+          && (data.get('createdAt', request.time) is timestamp)
+          && data.keys().size() <= 4;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidId(categoryId) && isValidCategory(incoming());
+      allow update: if isAdmin() && isValidId(categoryId) && isValidCategory(incoming());
+      allow delete: if isAdmin() && isValidId(categoryId);
+    }
+
+    // -------------------------------------------------------------------------
+    // MENU ITEMS COLLECTION
+    // -------------------------------------------------------------------------
+    match /menuItems/{itemId} {
+      function isValidMenuItem(data) {
+        return data.keys().hasAll(['categoryId', 'itemName', 'price', 'image', 'available'])
+          && data.categoryId is string && data.categoryId.size() > 0
+          && data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 200
+          && data.price is number && data.price >= 0
+          && data.image is string && data.image.size() <= 2000
+          && data.available is bool
+          && (data.get('createdAt', request.time) is timestamp)
+          && data.keys().size() <= 7;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidId(itemId) && isValidMenuItem(incoming());
+      allow update: if isCaptain() && isValidId(itemId) && (
+        isAdmin() || (isCaptain() && incoming().diff(existing()).affectedKeys().hasOnly(['available']))
+      );
+      allow delete: if isAdmin() && isValidId(itemId);
+    }
+
+    // -------------------------------------------------------------------------
+    // ORDERS COLLECTION
+    // -------------------------------------------------------------------------
+    match /orders/{orderId} {
+      function isValidOrder(data) {
+        return data.keys().hasAll(['tableNumber', 'items', 'totalAmount', 'orderStatus', 'timestamp', 'captainId', 'captainName'])
+          && data.tableNumber is string
+          && data.items is list && data.items.size() > 0
+          && data.totalAmount is number && data.totalAmount >= 0
+          && data.orderStatus in ['pending', 'running', 'completed', 'cancelled']
+          && data.timestamp is timestamp
+          && data.captainId is string && data.captainId == request.auth.uid
+          && data.captainName is string
+          && (data.get('paymentStatus', 'unpaid') in ['paid', 'unpaid'])
+          && (data.get('orderNotes', '') is string)
+          && (data.get('discountAmount', 0) is number)
+          && (data.get('taxAmount', 0) is number)
+          && (data.get('finalAmount', 0) is number)
+          && (data.get('paymentMethod', '') in ['', 'CASH', 'CARD', 'UPI', 'OTHER'])
+          && (data.get('cancellationReason', '') is string)
+          && data.keys().size() <= 15;
+      }
+
+      allow read: if isCaptain();
+      allow create: if isCaptain() && isValidId(orderId) && isValidOrder(incoming()) && incoming().timestamp == request.time;
+      allow update: if isCaptain() && isValidId(orderId) && (
+        (incoming().captainId == existing().captainId && isValidOrder(incoming()) && (
+          // Add/Update items in running order
+          (existing().orderStatus == 'running' && incoming().orderStatus == 'running' && incoming().diff(existing()).affectedKeys().hasOnly(['items', 'totalAmount', 'orderNotes'])) ||
+          // Complete order
+          (existing().orderStatus == 'running' && incoming().orderStatus == 'completed' && incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'paymentStatus', 'discountAmount', 'taxAmount', 'finalAmount', 'paymentMethod'])) ||
+          // Cancel order
+          (existing().orderStatus == 'running' && incoming().orderStatus == 'cancelled' && incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'cancellationReason']))
+        )) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+  }
+}
