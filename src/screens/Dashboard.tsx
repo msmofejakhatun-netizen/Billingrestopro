@@ -203,7 +203,7 @@ const Dashboard = () => {
   );
 
   return (
-    <div className="pb-24 max-w-lg mx-auto md:max-w-none px-4 md:px-0">
+    <div className="w-full max-w-[100vw] overflow-x-hidden pb-24 px-2 md:px-6">
       {/* Mobile Top Bar */}
       <header className="flex items-center justify-between py-4 sticky top-0 bg-slate-50/80 backdrop-blur-md z-40">
         <div>
@@ -325,7 +325,7 @@ const Dashboard = () => {
       )}
 
       {/* Tables Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3 md:gap-6">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-2 sm:gap-4 md:gap-6">
         <AnimatePresence mode="popLayout">
           {filteredTables.map((table) => {
             const activeOrder = table.currentOrderId ? ordersMap[table.currentOrderId] : null;
@@ -356,7 +356,7 @@ const Dashboard = () => {
                   }
                 }}
                 whileTap={{ scale: 0.98 }}
-                className={`relative group rounded-3xl p-3 border flex flex-col gap-2 cursor-pointer transition-all touch-manipulation min-h-[110px] items-center justify-center text-center ${statusStyles.card} shadow-sm backdrop-blur-sm`}
+                className={`relative group rounded-2xl p-2.5 border flex flex-col gap-1.5 cursor-pointer transition-all touch-manipulation min-h-[100px] items-center justify-center text-center ${statusStyles.card} shadow-sm backdrop-blur-sm`}
               >
                 {/* Menu Toggle Icon */}
                 <button 
@@ -371,10 +371,10 @@ const Dashboard = () => {
 
                 {/* Table Number & Status */}
                 <div className="flex flex-col items-center">
-                  <span className="text-xl font-black text-slate-800 tracking-tight leading-none mb-0.5">{table.tableNumber}</span>
+                  <span className="text-lg font-black text-slate-800 tracking-tight leading-none mb-0.5">{table.tableNumber}</span>
                   <div className="flex items-center gap-1">
                     <div className={`w-1 h-1 rounded-full ${statusStyles.dot}`} />
-                    <span className={`text-[7px] font-black uppercase tracking-widest ${statusStyles.text}`}>{status}</span>
+                    <span className={`text-[6px] font-black uppercase tracking-widest ${statusStyles.text}`}>{status}</span>
                   </div>
                 </div>
 
@@ -382,16 +382,16 @@ const Dashboard = () => {
                 {activeOrder ? (
                   <div className="space-y-1 w-full">
                     {/* Amount Highlight */}
-                    <div className="bg-white/60 py-1 px-2 rounded-xl flex items-center justify-between gap-1 border border-black/5">
-                       <span className={`text-[11px] font-black tracking-tighter ${status === 'running' ? 'text-amber-600' : 'text-purple-600'}`}>₹{activeOrder.totalAmount}</span>
+                    <div className="bg-white/60 py-0.5 px-1.5 rounded-lg flex items-center justify-between gap-0.5 border border-black/5">
+                       <span className={`text-[10px] font-black tracking-tighter ${status === 'running' ? 'text-amber-600' : 'text-purple-600'}`}>₹{activeOrder.totalAmount}</span>
                        <div className="flex items-center gap-0.5 opacity-50">
-                          <span className="text-[7px] font-black">{activeOrder.items.reduce((sum, i) => sum + i.quantity, 0)}</span>
-                          <LayoutGrid size={7} strokeWidth={3} />
+                          <span className="text-[6px] font-black">{activeOrder.items.reduce((sum, i) => sum + i.quantity, 0)}</span>
+                          <LayoutGrid size={6} strokeWidth={3} />
                        </div>
                     </div>
                     
                     {/* Info Badges */}
-                    <div className="flex items-center justify-center gap-1 mt-0.5">
+                    <div className="flex items-center justify-center gap-0.5 mt-0.5">
                        <div className="flex items-center gap-0.5 text-[6px] font-black text-slate-400 bg-slate-50/50 px-1 py-0.5 rounded-md border border-slate-100">
                           <Users size={6} strokeWidth={3} />
                           <span>{table.guestCount || 0}</span>
@@ -403,9 +403,9 @@ const Dashboard = () => {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center gap-1 mt-auto">
-                    <div className="flex items-center gap-1 text-[8px] font-bold text-slate-400 bg-slate-50/50 px-2 py-0.5 rounded-full border border-slate-100">
-                      <Users size={8} />
+                  <div className="flex items-center justify-center gap-0.5 mt-auto">
+                    <div className="flex items-center gap-0.5 text-[7px] font-bold text-slate-400 bg-slate-50/50 px-1.5 py-0.5 rounded-full border border-slate-100">
+                      <Users size={7} />
                       <span className="uppercase tracking-[0.05em] font-black">{table.guestCount || 4} Pax</span>
                     </div>
                   </div>
@@ -467,6 +467,17 @@ const Dashboard = () => {
                             }`}>Status: {table.status}</p>
                          </div>
                       </div>
+                      
+                      <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-2xl border border-slate-100">
+                         <Users size={14} className="text-slate-400" />
+                         <input 
+                           type="number" 
+                           defaultValue={table.guestCount || 4}
+                           onChange={(e) => updateTable(table.id, { guestCount: parseInt(e.target.value) || 0 })}
+                           className="bg-transparent w-10 text-xs font-black outline-none"
+                         />
+                      </div>
+
                       <button onClick={() => setShowTableActions(null)} className="p-2.5 bg-slate-50 text-slate-400 rounded-2xl active:bg-slate-100">
                         <X size={18} />
                       </button>
