@@ -10,6 +10,8 @@ import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestor
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+
 const InventoryDashboard = () => {
   const { currentRestaurant } = useRestaurantStore();
   const [stock, setStock] = useState<any[]>([]);
@@ -28,6 +30,8 @@ const InventoryDashboard = () => {
     return onSnapshot(q, (snapshot) => {
       setStock(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'inventory');
     });
   }, [currentRestaurant?.id]);
 

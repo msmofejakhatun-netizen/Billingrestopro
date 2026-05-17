@@ -130,8 +130,8 @@ const HybridSyncDashboard = () => {
                          <HardDrive size={18} />
                       </div>
                       <div>
-                        <p className="font-black text-slate-800 uppercase text-xs">Table {order.tableNumber} - ₹{order.total}</p>
-                        <p className="text-[10px] font-mono text-slate-400 uppercase">{order.id} • {format(order.timestamp, 'HH:mm:ss')}</p>
+                        <p className="font-black text-slate-800 uppercase text-xs">Table {order.tableName} - ₹{order.total}</p>
+                        <p className="text-[10px] font-mono text-slate-400 uppercase">{order.id} • {order.createdAt ? format(order.createdAt, 'HH:mm:ss') : 'N/A'}</p>
                       </div>
                    </div>
                    

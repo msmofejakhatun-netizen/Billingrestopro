@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { collection, query, where, getDocs, Timestamp, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { 
   Calculator, DollarSign, CreditCard, Smartphone, 
   XCircle, CheckCircle2, Printer, Download, Clock,
-  TrendingUp, ArrowRight
+  TrendingUp, ArrowRight, AlertTriangle
 } from 'lucide-react';
 import { format, startOfDay, endOfDay } from 'date-fns';
 import { motion } from 'motion/react';

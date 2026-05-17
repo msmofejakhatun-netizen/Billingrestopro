@@ -10,11 +10,10 @@ const TableManager = () => {
   const { profile } = useAuthStore();
   const { tables, addTable, deleteTable, updateStatus, updateTable } = useTableStore();
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
-  const [activeTab, setActiveTab] = useState<RestaurantTable['section']>('Hall');
+  const [activeTab, setActiveTab] = useState<string>('Hall');
+  const [sections, setSections] = useState<string[]>(['Hall', 'Outside', 'Outdoor', 'Other']);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [editingTableId, setEditingTableId] = useState<string | null>(null);
-
-  const sections: RestaurantTable['section'][] = ['Hall', 'Outside', 'Outdoor', 'Other'];
 
   const filteredTables = tables.filter(t => (t.section || 'Hall') === activeTab);
 
@@ -97,6 +96,18 @@ const TableManager = () => {
             {sec}
           </button>
         ))}
+         <button
+            onClick={() => {
+               const newSection = prompt("Enter new section name");
+               if (newSection && !sections.includes(newSection)) {
+                 setSections([...sections, newSection]);
+                 setActiveTab(newSection);
+               }
+            }}
+            className="px-6 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-800 transition-all"
+         >
+           + Add
+         </button>
       </div>
 
       {/* Grid */}

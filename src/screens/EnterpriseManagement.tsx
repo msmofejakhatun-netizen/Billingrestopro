@@ -7,28 +7,112 @@ import {
   Users, Printer, Search, MoreVertical, Trash2, Power
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
+
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 
 const EnterpriseManagement = () => {
   const { currentRestaurant } = useRestaurantStore();
   const { profile } = useAuthStore();
   const [devices, setDevices] = useState<any[]>([]);
+  const [enterprise, setEnterprise] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentRestaurant?.id) return;
+
+    // Fetch Enterprise Document
+    const unsubEnterprise = onSnapshot(doc(db, 'enterprise', currentRestaurant.id), (snap) => {
+      if (snap.exists()) {
+        setEnterprise(snap.data());
+      } else {
+        // Auto create missing enterprise document
+        console.log("[EnterpriseHub] Creating missing enterprise document...");
+        const defaultData = {
+          restaurantId: currentRestaurant.id,
+          maxBranches: 1,
+          maxUsers: 10,
+          updatedAt: serverTimestamp()
+        };
+        setDoc(doc(db, 'enterprise', currentRestaurant.id), defaultData)
+          .catch(e => console.error("Enterprise auto-create failed:", e));
+      }
+    }, (err) => {
+      console.warn("Enterprise doc access restricted:", err.message);
+    });
+
+    return () => unsubEnterprise();
+  }, [currentRestaurant?.id]);
+
+  useEffect(() => {
+    // 1. Log Auth State for Debugging
+    console.log("[EnterpriseHub] Init:", { 
+      hasUserId: !!profile?.uid, 
+      restaurantId: currentRestaurant?.id,
+      role: profile?.role 
+    });
+
+    // 2. Loading Timeout Safety
+    const timeout = setTimeout(() => {
+      if (loading) {
+        console.warn("[EnterpriseHub] Loading timeout reached - forcing stop");
+        setLoading(false);
+      }
+    }, 10000); // 10s maximum wait
+
+    return () => clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    if (!currentRestaurant?.id) {
+      console.log("[EnterpriseHub] Waiting for restaurant data...");
+      return;
+    }
+
+    const docPath = `authorizedDevices where restaurantId == ${currentRestaurant.id}`;
+    console.log("[EnterpriseHub] Fetching documents:", docPath);
 
     const q = query(
       collection(db, 'authorizedDevices'),
       where('restaurantId', '==', currentRestaurant.id)
     );
 
-    return onSnapshot(q, (snapshot) => {
-      setDevices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      try {
+        setDevices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        setLoading(false);
+        setError(null);
+      } catch (err) {
+        console.error("[EnterpriseHub] Process Error:", err);
+        setLoading(false);
+      }
+    }, (error) => {
+      console.error("[EnterpriseHub] Firestore Error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'authorizedDevices');
+      setError("Permission denied or connection lost");
       setLoading(false);
     });
+
+    return () => unsubscribe();
+  }, [currentRestaurant?.id]);
+
+  // Handle auto-creation of missing fields or document if needed
+  useEffect(() => {
+    if (currentRestaurant?.id && (!currentRestaurant.subscriptionPlan || !currentRestaurant.licenseKey)) {
+        console.log("[EnterpriseHub] Missing enterprise fields - patching restaurant doc");
+        const patchData = {
+           subscriptionPlan: currentRestaurant.subscriptionPlan || 'basic',
+           subscriptionStatus: currentRestaurant.subscriptionStatus || 'trial',
+           licenseKey: currentRestaurant.licenseKey || `RP-TRIAL-${currentRestaurant.id.slice(-4)}`,
+           captainLimit: currentRestaurant.captainLimit || 10,
+           deviceLimit: currentRestaurant.deviceLimit || 2
+        };
+        updateDoc(doc(db, 'restaurants', currentRestaurant.id), patchData)
+          .catch(e => console.error("[EnterpriseHub] Patch fail:", e));
+    }
   }, [currentRestaurant?.id]);
 
   const toggleDevice = async (deviceId: string, currentStatus: string) => {
@@ -51,7 +135,57 @@ const EnterpriseManagement = () => {
     }
   };
 
-  if (loading) return <div className="p-20 text-center font-black animate-pulse text-indigo-400">LOADING ENTERPRISE HUB...</div>;
+  // 3. Fallback & Loading UIs
+  if (loading) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-20 text-center">
+        <motion.div
+           animate={{ rotate: 360 }}
+           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+           className="mb-8"
+        >
+           <Zap className="text-indigo-400" size={48} />
+        </motion.div>
+        <h2 className="text-xl font-black text-slate-900 mb-2 italic">LOADING ENTERPRISE HUB...</h2>
+        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em] animate-pulse">Syncing Security Protocols & Assets</p>
+      </div>
+    );
+  }
+
+  if (error || !currentRestaurant) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-10 text-center bg-white rounded-[3rem] m-6 shadow-sm border border-slate-100">
+        <div className="bg-rose-50 p-6 rounded-full mb-6">
+           <AlertTriangle className="text-rose-500" size={48} />
+        </div>
+        <h2 className="text-2xl font-black text-slate-900 mb-2 italic uppercase">No Enterprise Data Found</h2>
+        <p className="text-slate-500 text-xs font-bold uppercase tracking-widest max-w-sm leading-loose">
+           {error || "We couldn't connect to your restaurant's enterprise profile. Please check your connection or permissions."}
+        </p>
+        <button 
+           onClick={() => window.location.reload()}
+           className="mt-10 px-10 py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl shadow-slate-200"
+        >
+           Restart Hub
+        </button>
+      </div>
+    );
+  }
+
+  // 4. Null safety for sub-components
+  const subscription = {
+    plan: currentRestaurant?.subscriptionPlan || 'Enterprise Basic',
+    status: currentRestaurant?.subscriptionStatus || 'active',
+    license: currentRestaurant?.licenseKey || 'RP-UNLICENSED-000',
+    expiry: '14 June 2026' // Fallback
+  };
+
+  const metrics = {
+    captainSlots: enterprise?.maxUsers || currentRestaurant?.captainLimit || 10,
+    deviceSlots: currentRestaurant?.deviceLimit || 2,
+    revenue: currentRestaurant?.earnings || 0,
+    orders: currentRestaurant?.totalOrders || 0
+  };
 
   return (
     <div className="space-y-10 pb-20 max-w-6xl mx-auto">
@@ -81,9 +215,9 @@ const EnterpriseManagement = () => {
                         <Zap size={24} />
                      </div>
                      <div>
-                        <p className="text-lg font-black text-slate-900 uppercase italic">Enterprise Pro</p>
-                        <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest flex items-center gap-1">
-                           <CheckCircle size={10} /> Active Renewal: 14 June 2026
+                        <p className="text-lg font-black text-slate-900 uppercase italic">{subscription.plan}</p>
+                        <p className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${subscription.status === 'active' || subscription.status === 'trial' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                           <CheckCircle size={10} /> {subscription.status.toUpperCase()}: {subscription.expiry}
                         </p>
                      </div>
                   </div>
@@ -93,9 +227,17 @@ const EnterpriseManagement = () => {
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">License Key</p>
                   <div className="flex items-center justify-between gap-4">
                      <p className="bg-white px-4 py-2 rounded-xl text-xs font-mono font-black text-indigo-600 tracking-widest border border-slate-200">
-                        {currentRestaurant?.licenseKey || 'RP-FREE-TRIAL-881'}
+                        {subscription.license}
                      </p>
-                     <button className="text-[9px] font-black uppercase text-indigo-600 hover:underline">Copy</button>
+                     <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(subscription.license);
+                          toast.success("License key copied");
+                        }}
+                        className="text-[9px] font-black uppercase text-indigo-600 hover:underline"
+                     >
+                        Copy
+                     </button>
                   </div>
                </div>
             </div>
@@ -114,7 +256,7 @@ const EnterpriseManagement = () => {
                     <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                        <div 
                          className="h-full bg-indigo-600" 
-                         style={{ width: typeof stat.used === 'number' ? `${(stat.used/stat.total)*100}%` : '100%' }} 
+                         style={{ width: typeof stat.used === 'number' ? `${(stat.used / (Number(stat.total) || 1)) * 100}%` : '100%' }} 
                        />
                     </div>
                     <p className="text-[10px] font-black text-slate-700 italic">{stat.used} / {stat.total}</p>
@@ -133,7 +275,9 @@ const EnterpriseManagement = () => {
             <div className="space-y-4 mt-10">
                <div className="flex justify-between items-center py-4 border-b border-white/10">
                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Monthly Cost</span>
-                  <span className="text-xl font-black italic">₹4,999</span>
+                  <span className="text-xl font-black italic">
+                    ₹{subscription.plan === 'enterprise' ? '9,999' : subscription.plan === 'pro' ? '4,999' : '999'}
+                  </span>
                </div>
                <button className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all">
                   Go Pro Support
@@ -176,15 +320,17 @@ const EnterpriseManagement = () => {
                                 <Smartphone size={24} />
                              </div>
                              <div>
-                                <p className="text-sm font-black text-slate-800 uppercase tracking-tight">{device.deviceId}</p>
-                                <p className="text-[10px] font-mono text-slate-400 truncate max-w-[200px]">{device.metadata?.userAgent.split(' ')[0]}</p>
-                             </div>
-                          </div>
-                       </td>
-                       <td className="px-10 py-6">
-                          <p className="text-xs font-black text-slate-600">{device.lastUsedAt?.toDate() ? device.lastUsedAt.toDate().toLocaleString() : 'N/A'}</p>
-                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Global IP: 42.106.XX.XX</p>
-                       </td>
+                        <p className="text-sm font-black text-slate-800 uppercase tracking-tight">{device.deviceId || 'UNKNOWN DEVICE'}</p>
+                        <p className="text-[10px] font-mono text-slate-400 truncate max-w-[200px]">{device.deviceType || 'RestoPro Terminal'}</p>
+                     </div>
+                  </div>
+               </td>
+               <td className="px-10 py-6">
+                  <p className="text-xs font-black text-slate-600">
+                    {device.lastSeen?.toDate ? device.lastSeen.toDate().toLocaleString() : 'Never'}
+                  </p>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Global IP: SECURED</p>
+               </td>
                        <td className="px-10 py-6">
                           <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
                             device.status === 'active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'

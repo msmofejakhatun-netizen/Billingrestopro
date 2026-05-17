@@ -5,6 +5,8 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { ShoppingBag, Clock, CheckCircle, IndianRupee, Eye, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { handleFirestoreError, OperationType } from '../../utils/firestoreErrorHandler';
+
 const OrdersTab = () => {
   const { profile } = useAuthStore();
   const [orders, setOrders] = useState<any[]>([]);
@@ -24,6 +26,9 @@ const OrdersTab = () => {
     return onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setOrders(docs);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
       setLoading(false);
     });
   }, [profile?.restaurantId]);

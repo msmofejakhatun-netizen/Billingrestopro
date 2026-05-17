@@ -12,6 +12,8 @@ import { CancellationReasonModal } from '../components/CancellationReasonModal';
 
 import { useRestaurantStore } from '../stores/useRestaurantStore';
 
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+
 const BillHistory = () => {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,7 +54,7 @@ const BillHistory = () => {
       setBills(billData);
       setLoading(false);
     }, (error) => {
-      console.error(error);
+      handleFirestoreError(error, OperationType.LIST, collectionName);
       setLoading(false);
     });
 

@@ -5,7 +5,7 @@ import { Activity, ShieldCheck, ShieldAlert, Cpu, Database } from 'lucide-react'
 import { auditService } from '../services/auditService';
 
 export const EnterpriseHealthMonitor = () => {
-  const { profile, logout } = useAuthStore();
+  const { profile, signOut } = useAuthStore();
   const [latency, setLatency] = useState(0);
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [securityStatus, setSecurityStatus] = useState<'safe' | 'warning' | 'alert'>('safe');

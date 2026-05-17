@@ -39,6 +39,8 @@ const Analytics = () => {
     const unsubCompleted = onSnapshot(q, (snapshot) => {
       const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
       setOrders(results);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
     });
 
     // Cancelled Orders
@@ -52,6 +54,9 @@ const Analytics = () => {
     const unsubCancelled = onSnapshot(qCancelled, (snapshot) => {
       const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
       setCancelledOrders(results);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
       setLoading(false);
     });
 

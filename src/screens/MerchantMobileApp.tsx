@@ -9,6 +9,7 @@ import {
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, limit, orderBy } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 
 const MerchantMobileApp = () => {
   const { currentRestaurant } = useRestaurantStore();
@@ -30,6 +31,8 @@ const MerchantMobileApp = () => {
     return onSnapshot(ordersQ, (snapshot) => {
       setLiveOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setStats(prev => ({ ...prev, activeTables: snapshot.size }));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
     });
   }, [currentRestaurant?.id]);
 

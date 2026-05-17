@@ -8,6 +8,7 @@ import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import { branchService, Branch } from '../services/branchService';
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 
 const BranchManagement = () => {
   const { currentRestaurant } = useRestaurantStore();
@@ -25,6 +26,8 @@ const BranchManagement = () => {
     return onSnapshot(q, (snapshot) => {
       setBranches(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Branch)));
       setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'branches');
     });
   }, [currentRestaurant?.id]);
 

@@ -3,6 +3,8 @@ import { auth, db } from '../lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+
 interface UserProfile {
   uid: string;
   name: string;
@@ -70,7 +72,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { user, profile } = get();
     if (!user) return;
     const docRef = doc(db, 'users', user.uid);
-    await setDoc(docRef, { ...profile, ...data }, { merge: true });
+    await setDoc(docRef, { ...profile, ...data }, { merge: true }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
     set({ profile: { ...profile, ...data } as UserProfile });
   },
   continueAsGuest: async () => {
@@ -93,6 +95,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (docSnap.exists()) {
           set({ profile: docSnap.data() as UserProfile });
         }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
     });
   },
   init: () => {
@@ -168,15 +172,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 captainLimit: 10,
                 deviceLimit: 3,
                 createdAt: serverTimestamp()
-              });
+              }).catch(e => handleFirestoreError(e, OperationType.CREATE, `restaurants/${resId}`));
 
               defaultProfile.restaurantId = resId;
-              await setDoc(docRef, defaultProfile);
+              await setDoc(docRef, defaultProfile).catch(e => handleFirestoreError(e, OperationType.CREATE, `users/${user.uid}`));
               set({ profile: defaultProfile, loading: false });
             } else {
               set({ loading: false });
             }
           }
+        }, (error) => {
+          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+          set({ loading: false });
         });
       } else {
         set({ profile: null, loading: false });
@@ -188,7 +195,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { profile, user } = get();
     if (user && profile) {
       const docRef = doc(db, 'users', user.uid);
-      await setDoc(docRef, { ...profile, restaurantId }, { merge: true });
+      await setDoc(docRef, { ...profile, restaurantId }, { merge: true }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
     }
   },
 }));

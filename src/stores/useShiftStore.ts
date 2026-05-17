@@ -57,7 +57,10 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         where('active', '==', true),
         limit(1)
       );
-      const snap = await getDocs(q);
+      const snap = await getDocs(q).catch(e => {
+        handleFirestoreError(e, OperationType.LIST, 'adminShifts');
+        throw e;
+      });
       if (!snap.empty) {
         console.log("DEBUG: Active shift found:", snap.docs[0].id);
         set({ activeSession: { id: snap.docs[0].id, ...snap.docs[0].data() } as AdminShift });
@@ -89,7 +92,10 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         where('active', '==', true),
         limit(1)
       );
-      const snap = await getDocs(q);
+      const snap = await getDocs(q).catch(e => {
+        handleFirestoreError(e, OperationType.LIST, 'adminShifts');
+        throw e;
+      });
       
       if (!snap.empty) {
         set({ activeSession: { id: snap.docs[0].id, ...snap.docs[0].data() } as AdminShift });
@@ -112,14 +118,17 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         pendingBills: 0
       };
 
-      const docRef = await addDoc(collection(db, 'adminShifts'), shiftDocData);
+      const docRef = await addDoc(collection(db, 'adminShifts'), shiftDocData).catch(e => {
+        handleFirestoreError(e, OperationType.CREATE, 'adminShifts');
+        throw e;
+      });
       
       set({ 
         activeSession: { ...shiftDocData, id: docRef.id, startedAt: { seconds: Math.floor(Date.now()/1000) } } as AdminShift 
       });
       toast.success('Shift STARTED Successfully');
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'adminShifts');
+      // handleFirestoreError already called in catch blocks
       throw e;
     } finally {
       set({ loading: false });
@@ -143,7 +152,10 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         where('restaurantId', '==', profile.restaurantId),
         where('createdAt', '>=', startTimestamp)
       );
-      const billSnap = await getDocs(billQ);
+      const billSnap = await getDocs(billQ).catch(e => {
+        handleFirestoreError(e, OperationType.LIST, 'bills');
+        throw e;
+      });
       
       let stats = {
         totalSales: 0,
@@ -173,7 +185,10 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         where('restaurantId', '==', profile.restaurantId),
         where('date', '>=', startTimestamp)
       );
-      const expenseSnap = await getDocs(expenseQ);
+      const expenseSnap = await getDocs(expenseQ).catch(e => {
+        handleFirestoreError(e, OperationType.LIST, 'expenses');
+        throw e;
+      });
       expenseSnap.forEach(d => stats.expenses += d.data().amount || 0);
 
       // 2. Create Day Report
@@ -186,7 +201,10 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         closedBy: auth.currentUser?.uid || 'unknown',
         closedByName: profile.name || 'Unknown'
       };
-      await addDoc(collection(db, 'dayReports'), reportData);
+      await addDoc(collection(db, 'dayReports'), reportData).catch(e => {
+        handleFirestoreError(e, OperationType.CREATE, 'dayReports');
+        throw e;
+      });
 
       // 3. Update active session
       await updateDoc(doc(db, 'adminShifts', activeSession.id), {
@@ -194,13 +212,15 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         status: 'closed',
         active: false,
         ...stats
+      }).catch(e => {
+        handleFirestoreError(e, OperationType.UPDATE, `adminShifts/${activeSession.id}`);
+        throw e;
       });
 
       set({ activeSession: null });
       toast.success('Shift CLOSED successfully and report generated');
     } catch (e) {
       console.error("Close shift error", e);
-      handleFirestoreError(e, OperationType.UPDATE, `adminShifts/${activeSession.id}`);
       throw e;
     }
   }

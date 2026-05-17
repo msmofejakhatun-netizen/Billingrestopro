@@ -10,6 +10,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 
+import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+
 const KDS = () => {
   const { profile } = useAuthStore();
   const [orders, setOrders] = useState<any[]>([]);
@@ -44,6 +46,9 @@ const KDS = () => {
           description: `Table ${lastChange.doc.data().tableNumber}`
         });
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
+      setLoading(false);
     });
 
     return () => unsubscribe();

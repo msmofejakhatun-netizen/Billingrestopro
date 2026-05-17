@@ -11,7 +11,7 @@ export interface RestaurantTable {
   status: 'available' | 'occupied' | 'running' | 'billed';
   currentOrderId?: string;
   restaurantId: string;
-  section: 'Hall' | 'Outside' | 'Outdoor' | 'Other';
+  section: string;
   guestCount?: number;
   lastOrderAt?: any;
   createdAt?: any;
@@ -22,7 +22,7 @@ interface TableState {
   loading: boolean;
   subscribe: () => () => void;
   updateStatus: (tableId: string, status: RestaurantTable['status'], orderId?: string) => Promise<void>;
-  addTable: (section?: RestaurantTable['section']) => Promise<void>;
+  addTable: (section?: string) => Promise<void>;
   updateTable: (id: string, data: Partial<RestaurantTable>) => Promise<void>;
   deleteTable: (id: string) => Promise<void>;
 }
@@ -76,7 +76,8 @@ export const useTableStore = create<TableState>((set, get) => ({
       return isNaN(num) ? max : Math.max(max, num);
     }, 0);
     
-    const prefix = section === 'Hall' ? 'H' : section === 'Outside' ? 'OS' : section === 'Outdoor' ? 'OD' : 'T';
+    // Prefix logic can be simplified or dynamic
+    const prefix = section.substring(0, 2).toUpperCase();
     const nextTableNum = `${prefix}${lastTableNum + 1}`;
     
     await addDoc(collection(db, 'tables'), {

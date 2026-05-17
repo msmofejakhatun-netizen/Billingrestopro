@@ -1,5 +1,17 @@
 {
   "entities": {
+    "Enterprise": {
+      "title": "Enterprise",
+      "description": "Global enterprise configuration and metrics",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" },
+        "maxBranches": { "type": "number" },
+        "maxUsers": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId"]
+    },
     "User": {
       "title": "User",
       "description": "App users (Captain, Admin, Owner)",
@@ -378,6 +390,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
         "menuItemId": { "type": "string" },
         "ingredients": {
           "type": "array",
@@ -390,7 +403,21 @@
           }
         }
       },
-      "required": ["menuItemId", "ingredients"]
+      "required": ["menuItemId", "ingredients", "restaurantId"]
+    },
+    "AuthorizedDevice": {
+      "title": "AuthorizedDevice",
+      "description": "Licensed devices for the restaurant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "deviceType": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["active", "suspended", "inactive"] }
+      },
+      "required": ["restaurantId", "deviceId"]
     },
     "Vendor": {
       "title": "Vendor",
@@ -512,6 +539,8 @@
     "coupons": { "schema": "Coupon", "description": "Promotion system" },
     "cancellationLogs": { "schema": "CancellationLog", "description": "Audit logs for cancellations" },
     "billingConfigurations": { "schema": "BillingConfiguration", "description": "Restaurant-specific billing and printing settings" },
-    "reservations": { "schema": "Reservation", "description": "Table reservations" }
+    "reservations": { "schema": "Reservation", "description": "Table reservations" },
+    "enterprise": { "schema": "Enterprise", "description": "Enterprise-wide configuration" },
+    "authorizedDevices": { "schema": "AuthorizedDevice", "description": "Lincensed devices control" }
   }
 }

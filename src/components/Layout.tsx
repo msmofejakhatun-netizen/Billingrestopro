@@ -16,7 +16,6 @@ import Sidebar from './Sidebar';
 import BottomNav from './BottomNav';
 
 import { EnterpriseHealthMonitor } from './EnterpriseHealthMonitor';
-import { useConfigStore } from '../stores/useConfigStore';
 
 const Layout = () => {
   const location = useLocation();

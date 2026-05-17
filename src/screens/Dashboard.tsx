@@ -25,7 +25,8 @@ const Dashboard = () => {
   
   const [processing, setProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeSection, setActiveSection] = useState<'Hall' | 'Outside' | 'Outdoor' | 'Other'>('Hall');
+  const [activeSection, setActiveSection] = useState<string>('Hall');
+  const sections = useMemo(() => Array.from(new Set(tables.map(t => t.section || 'Hall'))), [tables]);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showTableActions, setShowTableActions] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
@@ -248,10 +249,10 @@ const Dashboard = () => {
 
       {/* Section Tabs */}
       <div className="flex gap-1 bg-white p-1 rounded-2xl border border-slate-100 mb-4 overflow-x-auto no-scrollbar">
-        {['Hall', 'Outside', 'Outdoor', 'Other'].map((sec) => (
+        {sections.map((sec) => (
           <button
             key={sec}
-            onClick={() => setActiveSection(sec as any)}
+            onClick={() => setActiveSection(sec)}
             className={`flex-1 min-w-[70px] py-2 rounded-xl text-[9px] font-bold uppercase tracking-widest transition-all ${
               activeSection === sec 
                 ? 'bg-indigo-50 text-indigo-600 shadow-sm font-black' 
