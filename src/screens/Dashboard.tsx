@@ -646,44 +646,44 @@ const Dashboard = () => {
       )}
 
       {/* Recent Activity Section */}
-      <div className="mt-16 space-y-6">
-         <div className="flex items-center justify-between">
+      <div className="mt-12 space-y-4 px-1">
+         <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
-               <div className="w-8 h-8 bg-rose-100 rounded-xl flex items-center justify-center text-rose-600">
-                  <History size={18} />
+               <div className="w-7 h-7 bg-rose-100 rounded-lg flex items-center justify-center text-rose-600">
+                  <History size={16} />
                </div>
-               <h3 className="text-lg font-black text-slate-800 tracking-tight">Recent Activity</h3>
+               <h3 className="text-base font-black text-slate-800 tracking-tight">Recent Activity</h3>
             </div>
-            <button className="text-[10px] font-black uppercase text-indigo-600 hover:underline">View All</button>
+            <button className="text-[9px] font-black uppercase text-indigo-600 hover:underline">View All</button>
          </div>
 
-         <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden divide-y divide-slate-50">
+         <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden divide-y divide-slate-50 w-full">
             {activeOrders.slice(0, 5).map(o => (
-              <div key={o.id} className="p-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setViewingOrder(o.id!)}>
-                 <div className="flex items-center gap-4">
-                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black ${
+              <div key={o.id} className="p-3 flex items-center justify-between hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setViewingOrder(o.id!)}>
+                 <div className="flex items-center gap-3 overflow-hidden">
+                    <div className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm ${
                       o.orderStatus === 'billed' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'
                     }`}>
                       {o.tableNumber}
                     </div>
-                    <div>
-                       <p className="text-xs font-black text-slate-800">₹{o.totalAmount} • {o.items.length} Items</p>
-                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                    <div className="min-w-0">
+                       <p className="text-[11px] font-black text-slate-800 truncate">₹{o.totalAmount} • {o.items.length} Items</p>
+                       <p className="text-[8px] text-slate-400 font-bold uppercase tracking-widest truncate">
                          {o.captainName} • {o.orderStatus.toUpperCase()}
                        </p>
                     </div>
                  </div>
-                 <div className="text-right">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">
+                 <div className="text-right shrink-0">
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">
                        {o.timestamp?.seconds ? formatDistanceToNow(o.timestamp.toDate(), { addSuffix: true }) : 'just now'}
                     </p>
-                    <ChevronRight size={14} className="text-slate-300 ml-auto mt-1" />
+                    <ChevronRight size={12} className="text-slate-300 ml-auto" />
                  </div>
               </div>
             ))}
             {activeOrders.length === 0 && (
-              <div className="p-12 text-center">
-                 <p className="text-xs font-black text-slate-300 uppercase tracking-widest">No Recent Activity</p>
+              <div className="p-8 text-center">
+                 <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">No Recent Activity</p>
               </div>
             )}
          </div>

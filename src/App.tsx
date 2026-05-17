@@ -178,14 +178,14 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="menu" element={<RoleGuard allowedRoles={['owner', 'admin', 'captain']}><MenuScreen /></RoleGuard>} />
           <Route path="orders" element={<ActiveOrders />} />
-          <Route path="history" element={<OrderHistory />} />
+          <Route path="history" element={<RoleGuard allowedRoles={['owner', 'admin']}><OrderHistory /></RoleGuard>} />
           <Route path="analytics" element={<RoleGuard allowedRoles={['owner', 'admin']}><Analytics /></RoleGuard>} />
           <Route path="billing/:orderId" element={<Billing />} />
           <Route path="pending-bills" element={<PendingBills />} />
-          <Route path="bill-history" element={<BillHistory />} />
+          <Route path="bill-history" element={<RoleGuard allowedRoles={['owner', 'admin']}><BillHistory /></RoleGuard>} />
           <Route path="cancellation-audit" element={<RoleGuard allowedRoles={['owner', 'admin']}><CancellationReports /></RoleGuard>} />
           <Route path="expenses" element={<RoleGuard allowedRoles={['owner', 'admin']}><Expenses /></RoleGuard>} />
-          <Route path="day-end" element={<RoleGuard allowedRoles={['owner', 'admin', 'captain']}><DayEnd /></RoleGuard>} />
+          <Route path="day-end" element={<RoleGuard allowedRoles={['owner', 'admin']}><DayEnd /></RoleGuard>} />
           <Route path="reservations" element={<RoleGuard allowedRoles={['owner', 'admin', 'captain']}><Reservations /></RoleGuard>} />
           <Route path="hybrid-sync" element={<RoleGuard allowedRoles={['owner', 'admin']}><HybridSyncDashboard /></RoleGuard>} />
           <Route path="enterprise" element={<RoleGuard allowedRoles={['owner', 'admin']}><EnterpriseManagement /></RoleGuard>} />
@@ -205,8 +205,8 @@ function App() {
 
           <Route path="users" element={<RoleGuard allowedRoles={['owner']}><UserManagement /></RoleGuard>} />
           <Route path="restaurants" element={<RoleGuard allowedRoles={['owner']}><RestaurantManagement /></RoleGuard>} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="printer-settings" element={<PrinterSettings />} />
+          <Route path="settings" element={<RoleGuard allowedRoles={['owner', 'admin']}><Settings /></RoleGuard>} />
+          <Route path="printer-settings" element={<RoleGuard allowedRoles={['owner', 'admin']}><PrinterSettings /></RoleGuard>} />
           <Route path="billing-config" element={<RoleGuard allowedRoles={['owner', 'admin']}><BillingConfiguration /></RoleGuard>} />
         </Route>
       </Routes>

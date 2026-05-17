@@ -20,13 +20,11 @@ const BottomNav = () => {
     { path: '/', icon: LayoutDashboard, label: 'Dining' },
     { path: '/orders', icon: ShoppingBag, label: 'Running' },
     { path: '/pending-bills', icon: Receipt, label: 'Pending' },
-    { path: '/bill-history', icon: History, label: 'History' },
-    { path: '/profile', icon: User, label: 'Profile' },
   ];
 
   return (
     <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 z-50 w-full max-w-[100vw] overflow-hidden pb-[env(safe-area-inset-bottom)]">
-      <div className="grid grid-cols-5 items-center h-14">
+      <div className="grid grid-cols-3 items-center h-14">
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           return (

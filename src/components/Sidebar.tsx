@@ -43,7 +43,7 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
     // POS Sections
     { path: '/orders', icon: ShoppingBag, label: 'Running Orders', roles: ['owner', 'admin', 'captain'] },
     { path: '/pending-bills', icon: Receipt, label: 'Pending Bills', roles: ['owner', 'admin', 'captain'] },
-    { path: '/bill-history', icon: History, label: 'Bill History', roles: ['owner', 'admin', 'captain'] },
+    { path: '/bill-history', icon: History, label: 'Bill History', roles: ['owner', 'admin'] },
     { path: '/cancellation-audit', icon: XOctagon, label: 'Cancellation Audit', roles: ['owner', 'admin'] },
 
     // Expense & Reports
