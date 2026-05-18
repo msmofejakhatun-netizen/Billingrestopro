@@ -17,6 +17,7 @@ function createWindow() {
   if (isDev) {
     win.loadURL('http://localhost:3000');
   } else {
+    // Correctly load local production build
     win.loadFile(path.join(__dirname, 'dist/index.html'));
   }
 
