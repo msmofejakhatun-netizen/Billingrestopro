@@ -1,15 +1,12 @@
 import { create } from 'zustand';
-import { auth, db } from '../lib/firebase';
-import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
-import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
+export type UserRole = 'SUPER_OWNER' | 'OWNER' | 'ADMIN' | 'CASHIER' | 'CAPTAIN' | 'KITCHEN' | 'MANAGER' | 'super_owner' | 'owner' | 'admin' | 'cashier' | 'captain' | 'kitchen' | 'manager';
 
-interface UserProfile {
+export interface UserProfile {
   uid: string;
   name: string;
   email: string;
-  role: 'owner' | 'admin' | 'captain';
+  role: UserRole;
   restaurantId?: string;
   createdBy?: string;
   active: boolean;
@@ -17,185 +14,165 @@ interface UserProfile {
   defaultPrinterName?: string;
   printerAddress?: string;
   printerType?: 'BT' | 'USB';
-  permissions?: {
-    canEditOrder?: boolean;
-    canCancelOrder?: boolean;
-    canGenerateBill?: boolean;
-    canApplyDiscount?: boolean;
-    canReprintKOT?: boolean;
-    canPrinterAccess?: boolean;
-    canCancelBill?: boolean;
-  };
+  permissions?: Record<string, boolean>;
 }
 
+const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
+  SUPER_OWNER: ['all'],
+  super_owner: ['all'],
+  OWNER: ['reports', 'billing', 'day_end', 'staff_management', 'menu', 'printer_settings'],
+  owner: ['reports', 'billing', 'day_end', 'staff_management', 'menu', 'printer_settings'],
+  ADMIN: ['table_management', 'running_orders', 'billing', 'kot', 'settlement', 'customer_management'],
+  admin: ['table_management', 'running_orders', 'billing', 'kot', 'settlement', 'customer_management'],
+  MANAGER: ['table_management', 'running_orders', 'billing', 'kot', 'settlement', 'customer_management', 'reports', 'day_end', 'staff_management', 'menu'],
+  manager: ['table_management', 'running_orders', 'billing', 'kot', 'settlement', 'customer_management', 'reports', 'day_end', 'staff_management', 'menu'],
+  CASHIER: ['settlement', 'payment_processing', 'pending_bills'],
+  cashier: ['settlement', 'payment_processing', 'pending_bills'],
+  CAPTAIN: ['tables', 'add_order', 'kot', 'running_orders'],
+  captain: ['tables', 'add_order', 'kot', 'running_orders'],
+  KITCHEN: ['kot_view', 'ready_status_update'],
+  kitchen: ['kot_view', 'ready_status_update'],
+};
+
+export const hasPermission = (profile: UserProfile | null, requiredPermission: string): boolean => {
+  if (!profile || !profile.role) return false;
+  const normalizedRole = profile.role.toUpperCase() as UserRole;
+  if (normalizedRole === 'SUPER_OWNER') return true;
+  const permissions = ROLE_PERMISSIONS[normalizedRole];
+  if (!permissions) return false;
+  if (permissions.includes('all')) return true;
+  return permissions.includes(requiredPermission);
+};
+
 interface AuthState {
-  user: FirebaseUser | null;
+  user: any | null;
   profile: UserProfile | null;
+  impersonatedProfile: UserProfile | null;
   loading: boolean;
   initialized: boolean;
-  setUser: (user: FirebaseUser | null) => void;
+  error: string | null;
+  setError: (error: string | null) => void;
+  setUser: (user: any | null) => void;
   setProfile: (profile: UserProfile | null) => void;
+  setImpersonatedProfile: (profile: UserProfile | null) => void;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
-  continueAsGuest: () => Promise<void>;
   subscribeProfile: () => () => void;
   setRestaurant: (restaurantId: string) => Promise<void>;
   signOut: () => Promise<void>;
+  loginREST: (restaurantCode: string, usernameStr: string, passwordStr: string) => Promise<void>;
   init: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   profile: null,
+  impersonatedProfile: null,
   loading: true,
   initialized: false,
+  error: null,
+  setError: (error) => set({ error }),
   setUser: (user) => set({ user }),
   setProfile: (profile) => set({ profile }),
+  setImpersonatedProfile: (impersonatedProfile) => set({ impersonatedProfile }),
   signOut: async () => {
     try {
-      const { signOut: firebaseSignOut } = await import('firebase/auth');
-      await firebaseSignOut(auth);
-      
-      // Clear all stores and state
       set({ user: null, profile: null, loading: false });
-      
-      // Clear all browser storage
       localStorage.clear();
       sessionStorage.clear();
-      
-      // Force redirect to landing/login
       window.location.href = '/';
     } catch (error) {
       console.error('Sign out error:', error);
     }
   },
   updateProfile: async (data: Partial<UserProfile>) => {
-    const { user, profile } = get();
-    if (!user) return;
-    const docRef = doc(db, 'users', user.uid);
-    await setDoc(docRef, { ...profile, ...data }, { merge: true }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
-    set({ profile: { ...profile, ...data } as UserProfile });
-  },
-  continueAsGuest: async () => {
-    set({ loading: true });
-    try {
-      const { signInAnonymously } = await import('firebase/auth');
-      await signInAnonymously(auth);
-    } catch (error) {
-      console.error(error);
-      set({ loading: false });
-      throw error;
-    }
+    const { profile } = get();
+    if (!profile) return;
+    const updated = { ...profile, ...data };
+    set({ profile: updated });
+    localStorage.setItem('restopro_profile', JSON.stringify(updated));
   },
   subscribeProfile: () => {
-    const { user } = get();
-    if (!user) return () => {};
-    const docRef = doc(db, 'users', user.uid);
-    
-    return onSnapshot(docRef, (docSnap) => {
-        if (docSnap.exists()) {
-          set({ profile: docSnap.data() as UserProfile });
-        }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
-    });
+    return () => {}; // No Firestore subscription needed for static JWT profile
+  },
+  loginREST: async (restaurantCode, username, password) => {
+    set({ loading: true, error: null });
+    const payload = { restaurantCode, username, email: username, password };
+    console.log("LOGIN_REQUEST:", JSON.stringify(payload));
+    try {
+      const response = await fetch('/api/captain/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      console.log("LOGIN_RESPONSE:", JSON.stringify(data));
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Invalid credentials or connection issue.');
+      }
+
+      const captain = data.captain;
+      const restaurant = data.restaurant;
+      const token = data.accessToken || data.token;
+      const refreshToken = data.refreshToken;
+
+      const profileData: UserProfile = {
+        uid: data.userId || captain.id,
+        name: captain.name,
+        email: `${captain.username}@restopro.com`,
+        role: (data.role || captain.role) as UserRole,
+        restaurantId: data.restaurantId || restaurant.id,
+        active: true,
+        permissions: data.permissions 
+          ? data.permissions.reduce((acc: any, p: string) => ({ ...acc, [p]: true }), {}) 
+          : (captain.permissions ? captain.permissions.reduce((acc: any, p: string) => ({ ...acc, [p]: true }), {}) : {})
+      };
+
+      set({ 
+        user: { uid: profileData.uid, email: profileData.email }, 
+        profile: profileData, 
+        loading: false 
+      });
+
+      localStorage.setItem('restopro_token', token);
+      if (refreshToken) {
+        localStorage.setItem('restopro_refresh_token', refreshToken);
+      }
+      localStorage.setItem('restopro_profile', JSON.stringify(profileData));
+    } catch (e: any) {
+      console.error("LOGIN_ERROR:", e.message || e);
+      set({ loading: false, error: e.message });
+      throw e;
+    }
   },
   init: () => {
     if (get().initialized) return;
     
-    onAuthStateChanged(auth, async (user) => {
-      set({ user, loading: !!user });
-      
-      if (user) {
-        const docRef = doc(db, 'users', user.uid);
-        // Use onSnapshot for real-time profile updates
-        const unsubscribe = onSnapshot(docRef, async (docSnap) => {
-          if (docSnap.exists()) {
-            const profileData = docSnap.data() as UserProfile;
-            
-            // AUTOMATIC RECOVERY: If owner/admin is missing restaurantId, try to find it
-            if (!profileData.restaurantId && (profileData.role === 'owner' || profileData.role === 'admin')) {
-               console.log('Attempting automatic restaurantId recovery for:', profileData.email);
-               const { collection, query, where, getDocs, limit } = await import('firebase/firestore');
-               const resQuery = query(
-                 collection(db, 'restaurants'), 
-                 where('ownerId', '==', user.uid),
-                 limit(1)
-               );
-               try {
-                 const resSnap = await getDocs(resQuery);
-                 if (!resSnap.empty) {
-                    const foundId = resSnap.docs[0].id;
-                    await setDoc(docRef, { restaurantId: foundId }, { merge: true });
-                    profileData.restaurantId = foundId;
-                    console.log('Recovered restaurantId:', foundId);
-                 } else {
-                    console.warn('No restaurant found under this owner account.');
-                 }
-               } catch (e) {
-                 console.error('Migration failed:', e);
-               }
-            }
-            
-            set({ profile: profileData, loading: false });
-          } else {
-            // Auto-bootstrap for owner
-            const devEmail = 'darbesh789@gmail.com';
-            const defaultOwnerEmail = 'owner@captainpro.com';
-            const demoEmail1 = 'demo@gmail.co';
-            const demoEmail2 = 'demo@gmail.com';
-            
-            const isAutoBootstrapEmail = [devEmail, defaultOwnerEmail, demoEmail1, demoEmail2].includes(user.email?.toLowerCase() || '');
+    const token = localStorage.getItem('restopro_token');
+    const storedProfile = localStorage.getItem('restopro_profile');
 
-            if (isAutoBootstrapEmail) {
-              const defaultProfile: UserProfile = {
-                uid: user.uid,
-                name: user.displayName || "Super Owner",
-                email: user.email!,
-                role: "owner",
-                active: true
-              };
-              
-              const resId = `RESTO-${Math.floor(1000 + Math.random() * 9000)}`;
-              
-              // Bootstrap restaurant if not exists
-              const resDoc = doc(db, 'restaurants', resId);
-              await setDoc(resDoc, {
-                id: resId,
-                restaurantName: "My RestoPro Enterprise",
-                restaurantCode: resId,
-                ownerId: user.uid,
-                ownerEmail: user.email,
-                active: true,
-                subscriptionPlan: 'pro',
-                subscriptionStatus: 'trial',
-                licenseKey: `RP-TRIAL-${resId}`,
-                captainLimit: 10,
-                deviceLimit: 3,
-                createdAt: serverTimestamp()
-              }).catch(e => handleFirestoreError(e, OperationType.CREATE, `restaurants/${resId}`));
-
-              defaultProfile.restaurantId = resId;
-              await setDoc(docRef, defaultProfile).catch(e => handleFirestoreError(e, OperationType.CREATE, `users/${user.uid}`));
-              set({ profile: defaultProfile, loading: false });
-            } else {
-              set({ loading: false });
-            }
-          }
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
-          set({ loading: false });
+    if (token && storedProfile) {
+      try {
+        const profileData = JSON.parse(storedProfile);
+        set({ 
+          user: { uid: profileData.uid, email: profileData.email }, 
+          profile: profileData, 
+          loading: false, 
+          initialized: true 
         });
-      } else {
-        set({ profile: null, loading: false });
+        return;
+      } catch (e) {
+        console.error("Failed to parse stored profile", e);
       }
-      set({ initialized: true });
-    });
+    }
+    
+    set({ user: null, profile: null, loading: false, initialized: true });
   },
   setRestaurant: async (restaurantId: string) => {
-    const { profile, user } = get();
-    if (user && profile) {
-      const docRef = doc(db, 'users', user.uid);
-      await setDoc(docRef, { ...profile, restaurantId }, { merge: true }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`));
+    const { profile } = get();
+    if (profile) {
+      const updated = { ...profile, restaurantId };
+      set({ profile: updated });
+      localStorage.setItem('restopro_profile', JSON.stringify(updated));
     }
   },
 }));

@@ -1,18 +1,25 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useTableStore, RestaurantTable } from '../stores/useTableStore';
 import { useOrderStore } from '../stores/useOrderStore';
-import { useAuthStore } from '../stores/useAuthStore';
+import { CashDrawerWidget } from '../components/CashDrawerWidget';
+import { useAuthStore, hasPermission } from '../stores/useAuthStore';
 import { usePrinterStore } from '../stores/usePrinterStore';
 import { useShiftStore } from '../stores/useShiftStore';
+import { useExpenseStore } from '../stores/useExpenseStore';
+import { useCashDropStore } from '../stores/useCashDropStore';
 import { useNavigate } from 'react-router-dom';
+import OwnerDashboardView from '../components/OwnerDashboardView';
+import SuperOwnerDashboardView from '../components/SuperOwnerDashboardView';
+
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Plus, Loader2, Users, Clock, MoreVertical, Bell, LayoutGrid, 
   Filter, Trash2, Edit2, RotateCcw, Combine, X, ChevronRight, 
   Printer, Receipt, History, User, Minus, CreditCard, Wallet, 
-  CheckCircle2, AlertCircle, ShoppingCart, Info, List
+  CheckCircle2, AlertCircle, ShoppingCart, Info, List, XCircle, Shield
 } from 'lucide-react';
 import { printQueueService } from '../services/printQueueService';
+import { auditService, AuditLog } from '../services/auditService';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -20,7 +27,7 @@ const Dashboard = () => {
   const { tables, loading: tablesLoading, subscribe: subscribeTables, addTable, deleteTable, updateTable } = useTableStore();
   const { profile } = useAuthStore();
   const { setCurrentTable, setCurrentOrder, activeOrders, subscribeActiveOrders, startTableSession, loadOrderToCart } = useOrderStore();
-  const { activeSession, checkActiveSession } = useShiftStore();
+  const { activeSession, checkActiveSession, loading: shiftLoading } = useShiftStore();
   const { isConnected, defaultPrinter } = usePrinterStore();
   
   const [processing, setProcessing] = useState(false);
@@ -37,8 +44,117 @@ const Dashboard = () => {
   const [now, setNow] = useState(new Date());
   const longPressTimer = useRef<any>(null);
   const isLongPress = useRef(false);
+
+  // Day Open Workflow States
+  const [showOpenDayModal, setShowOpenDayModal] = useState(false);
+  const [showCashDropModal, setShowCashDropModal] = useState(false);
+  const [dropAmountInput, setDropAmountInput] = useState('');
+  const [dropReasonInput, setDropReasonInput] = useState('');
+  const [isDroppingCash, setIsDroppingCash] = useState(false);
   
+  const [openingCashInput, setOpeningCashInput] = useState('');
+  const [cashierNameInput, setCashierNameInput] = useState(profile?.name || '');
+  const [terminalNameInput, setTerminalNameInput] = useState('Terminal 1');
+  const [notesInput, setNotesInput] = useState('');
+  const [isOpeningShift, setIsOpeningShift] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+
+  // Automatically trigger the modal on load if the shift is closed (only for active session required roles)
+  useEffect(() => {
+    const userRole = (profile?.role || "").toUpperCase();
+    const isSessionRequiredRole = userRole === 'CASHIER' || userRole === 'ADMIN';
+    if (isSessionRequiredRole && activeSession && activeSession.status !== 'OPEN') {
+      setShowOpenDayModal(true);
+    }
+  }, [activeSession, profile]);
+
+  const { expenses } = useExpenseStore();
+  const { cashDrops } = useCashDropStore();
+  
+  const paymentBreakdown = useMemo(() => {
+    const paymentMethods = [
+      { label: 'Cash', key: 'CASH', color: 'text-emerald-600' },
+      { label: 'UPI', key: 'UPI', color: 'text-indigo-600' },
+      { label: 'Card', key: 'CARD', color: 'text-rose-600' },
+      { label: 'Split', key: 'SPLIT PAYMENT', color: 'text-amber-600' },
+      { label: 'Credit', key: 'CREDIT', color: 'text-slate-600' },
+      { label: 'Room', key: 'ROOM POSTING', color: 'text-purple-600' },
+      { label: 'Comp', key: 'COMPLIMENTARY', color: 'text-blue-600' },
+    ];
+
+    return paymentMethods.map(({ label, key, color }) => {
+      const total = activeOrders.reduce((sum, order) => {
+        if (order.payments && order.payments.length > 0) {
+            const payment = order.payments.find(p => p.method === key);
+            return sum + (payment?.amount || 0);
+        }
+        // Fallback check
+        if (order.paymentMethod === key && order.paidAmount) return sum + order.paidAmount;
+        return sum;
+      }, 0);
+
+      return (
+        <div key={key} className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+          <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mb-1">{label}</p>
+          <p className={`text-sm font-black ${color}`}>₹{total.toFixed(0)}</p>
+        </div>
+      );
+    });
+  }, [activeOrders]);
+
+  const totalCashSales = useMemo(() => {
+    return activeOrders.reduce((sum, order) => {
+      // If order is completed and paid by CASH
+      if (order.orderStatus === 'COMPLETED' && order.paymentStatus === 'PAID') {
+         if (order.payments && order.payments.length > 0) {
+            const cashPayment = order.payments.find(p => p.method === 'CASH');
+            return sum + (cashPayment?.amount || 0);
+         }
+         // Fallback check
+         if (order.paymentMethod === 'CASH') return sum + (order.paidAmount || 0);
+      }
+      return sum;
+    }, 0);
+  }, [activeOrders]);
+
+  const drawerBalance = useMemo(() => {
+    if (!activeSession) return 0;
+    
+    const openingCash = activeSession.openingCash || 0;
+    
+    // Expenses
+    const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+
+    // Cash Drops
+    const totalCashDrops = cashDrops.reduce((sum, drop) => sum + drop.amount, 0);
+
+    return openingCash + totalCashSales - totalExpenses - totalCashDrops;
+  }, [activeSession, totalCashSales, expenses, cashDrops]);
+
   const navigate = useNavigate();
+
+  // Redirect by role to specific dashboards if visiting Dashboard /
+  useEffect(() => {
+    if (profile?.role) {
+      const normRole = profile.role.toUpperCase();
+      if (normRole === 'KITCHEN') {
+        navigate('/kds');
+      } else if (normRole === 'CASHIER') {
+        navigate('/pending-bills');
+      } else if (normRole === 'ADMIN' || normRole === 'MANAGER') {
+        navigate('/admin');
+      }
+    }
+  }, [profile, navigate]);
+
+  // Keep cashier name input state in sync with user profile
+  useEffect(() => {
+    if (profile?.name) {
+      setCashierNameInput(profile.name);
+    }
+  }, [profile]);
+
+  const isAuthorizedToOpen = hasPermission(profile, 'openDay');
 
   const handleLongPress = (tableId: string) => {
     isLongPress.current = true;
@@ -86,12 +202,20 @@ const Dashboard = () => {
     checkActiveSession();
     const unsubTables = subscribeTables();
     const unsubOrders = subscribeActiveOrders();
+    const unsubExpenses = useExpenseStore.getState().subscribeExpenses();
+    const unsubCashDrops = useCashDropStore.getState().subscribeCashDrops();
+    const unsubAudit = auditService.subscribeToLogs(profile.restaurantId || '', (logs) => {
+      setAuditLogs(logs.slice(0, 5));
+    });
 
     const timer = setInterval(() => setNow(new Date()), 60000);
 
     return () => {
       unsubTables();
       unsubOrders();
+      unsubExpenses();
+      unsubCashDrops();
+      unsubAudit();
       clearInterval(timer);
     };
   }, [subscribeTables, subscribeActiveOrders, profile, checkActiveSession]);
@@ -108,7 +232,7 @@ const Dashboard = () => {
       const tableSection = table.section || 'Hall';
       const matchesSection = tableSection === activeSection;
       const matchesSearch = table.tableNumber.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || table.status === statusFilter;
+      const matchesStatus = statusFilter === 'all' || table.status === statusFilter || (statusFilter === 'billed' && table.status === 'BILLING');
       return matchesSection && matchesSearch && matchesStatus;
     });
   }, [tables, activeSection, searchQuery, statusFilter]);
@@ -180,7 +304,7 @@ const Dashboard = () => {
     } else if (table.currentOrderId) {
       const activeOrder = activeOrders.find(o => o.id === table.currentOrderId);
       if (activeOrder) {
-        if (activeOrder.orderStatus === 'billed') {
+        if (activeOrder.orderStatus === 'billed' || activeOrder.orderStatus === 'BILL_GENERATED') {
           navigate(`/billing/${table.currentOrderId}`);
         } else {
           loadOrderToCart(activeOrder);
@@ -192,15 +316,209 @@ const Dashboard = () => {
     }
   };
 
-  if (tablesLoading) return (
+  const userRole = (profile?.role || "").toUpperCase();
+  const isEnterpriseRole = ['SUPER_OWNER', 'SUPER_ADMIN', 'OWNER'].includes(userRole);
+
+  if (shiftLoading || (tablesLoading && !isEnterpriseRole)) return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
       <div className="relative">
         <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
         <div className="absolute inset-0 bg-indigo-600/10 rounded-full animate-ping"></div>
       </div>
-      <p className="font-black text-slate-400 uppercase tracking-widest text-[10px]">Syncing Floor Plan...</p>
+      <p className="font-black text-slate-400 uppercase tracking-widest text-[10px]">Restoring POS Shift State...</p>
     </div>
   );
+
+  // Directly render tailored enterprise workflows
+  if (userRole === 'SUPER_OWNER' || userRole === 'SUPER_ADMIN') {
+    return (
+      <div className="w-full max-w-[100vw] overflow-x-hidden pb-12 px-2 md:px-6">
+        <SuperOwnerDashboardView />
+      </div>
+    );
+  }
+
+  if (userRole === 'OWNER') {
+    return (
+      <div className="w-full max-w-[100vw] overflow-x-hidden pb-12 px-2 md:px-6">
+        <OwnerDashboardView />
+      </div>
+    );
+  }
+
+  if (!activeSession || activeSession.status !== 'OPEN') {
+    return (
+      <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center p-6 z-[9999] text-center overflow-y-auto">
+        <div className="max-w-md w-full bg-slate-800 rounded-[2.5rem] border border-slate-700/50 shadow-2xl p-8 backdrop-blur-md animate-in fade-in slide-in-from-bottom-8 duration-500">
+           <div className="flex flex-col items-center">
+              <div className="w-20 h-20 bg-rose-500/10 border border-rose-500/20 rounded-full flex items-center justify-center text-rose-500 mb-6">
+                <XCircle size={44} />
+              </div>
+
+              <h1 className="text-3xl font-black text-white tracking-tight uppercase mb-3">Day Not Open</h1>
+              <p className="text-slate-400 font-medium text-xs leading-relaxed mb-8">
+                The shift is currently locked. Opening cash must be reconciled to enable POS operations.
+              </p>
+           </div>
+           
+           <button 
+              onClick={() => {
+                if (!isAuthorizedToOpen) {
+                  toast.error("You are not authorized to start shifts.");
+                  return;
+                }
+                setShowOpenDayModal(true);
+              }}
+              className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all active:scale-95 shadow-lg shadow-emerald-950/20 mb-3"
+            >
+              Open Day / Start Shift
+            </button>
+            <button 
+              onClick={async () => {
+                const { signOut } = useAuthStore.getState();
+                await signOut();
+                toast.success("Logged out successfully");
+              }}
+              className="w-full py-4 bg-slate-700 text-slate-300 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-600 hover:text-white transition-all active:scale-95"
+            >
+              Logout
+            </button>
+        </div>
+
+        {/* OPEN DAY FORM OVERLAY */}
+        <AnimatePresence>
+          {showOpenDayModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[10000] overflow-y-auto" onClick={() => setShowOpenDayModal(false)}>
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 p-8 w-full max-w-lg text-left overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900 tracking-tight">Open POS Sales Day</h2>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Setup New Cash Drawer & Shift</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowOpenDayModal(false)}
+                    className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:bg-slate-100"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="space-y-4 flex-1 text-slate-700">
+                  {/* Cashier Name Input */}
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest block mb-1.5 font-sans">
+                      Cashier Name *
+                    </label>
+                    <input 
+                      type="text" 
+                      value={cashierNameInput}
+                      onChange={(e) => setCashierNameInput(e.target.value)}
+                      placeholder="Enter Cashier Name"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-indigo-500 transition-colors text-slate-800"
+                      required
+                    />
+                  </div>
+
+                  {/* Opening Cash Input */}
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest block mb-1.5 font-sans">
+                      Opening Cash Amount (INR) *
+                    </label>
+                    <input 
+                      type="number" 
+                      value={openingCashInput}
+                      onChange={(e) => setOpeningCashInput(e.target.value)}
+                      placeholder="e.g. 5000"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-indigo-500 transition-colors text-slate-800"
+                      required
+                    />
+                  </div>
+
+                  {/* Terminal Name Input */}
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest block mb-1.5 font-sans">
+                      Terminal Name *
+                    </label>
+                    <input 
+                      type="text" 
+                      value={terminalNameInput}
+                      onChange={(e) => setTerminalNameInput(e.target.value)}
+                      placeholder="e.g. Terminal 1, Handheld 1"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-indigo-500 transition-colors text-slate-800"
+                      required
+                    />
+                  </div>
+
+                  {/* Notes Area (Optional) */}
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest block mb-1.5 font-sans">
+                      Notes (Optional)
+                    </label>
+                    <textarea 
+                      value={notesInput}
+                      onChange={(e) => setNotesInput(e.target.value)}
+                      placeholder="Any notes about handover, balance or physical state"
+                      rows={2}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-indigo-500 transition-colors resize-none text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-8 flex gap-3 text-slate-705">
+                  <button 
+                    onClick={() => setShowOpenDayModal(false)}
+                    className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      if (!cashierNameInput.trim()) {
+                        toast.error("Please enter cashier name.");
+                        return;
+                      }
+                      if (openingCashInput === '') {
+                        toast.error("Please enter starting opening cash drawer balance.");
+                        return;
+                      }
+                      
+                      setIsOpeningShift(true);
+                      try {
+                        const { startShift } = useShiftStore.getState();
+                        await startShift({
+                          openingCash: Number(openingCashInput) || 0,
+                          cashierName: cashierNameInput.trim(),
+                          terminalName: terminalNameInput.trim() || 'POS Terminal',
+                          notes: notesInput.trim()
+                        });
+                        setShowOpenDayModal(false);
+                      } catch (err) {
+                        toast.error("Internal failure starting day transaction shift.");
+                      } finally {
+                        setIsOpeningShift(false);
+                      }
+                    }}
+                    disabled={isOpeningShift}
+                    className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 disabled:opacity-50"
+                  >
+                    {isOpeningShift ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : 'Start Day & Open POS'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-[100vw] overflow-x-hidden pb-24 px-2 md:px-6">
@@ -221,6 +539,164 @@ const Dashboard = () => {
           </button>
         </div>
       </header>
+
+      {/* Active Day Shift Banner */}
+      {activeSession && (
+        <div className="mb-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="flex items-center gap-2">
+            <div className="bg-emerald-600 text-white text-[8px] font-black uppercase px-2 py-1 rounded-full tracking-wider flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
+              Day Opened
+            </div>
+            {profile?.role !== 'captain' && (
+              <div className="text-xs font-black text-slate-800">
+                <span className="text-emerald-700 uppercase tracking-wider text-[9px] font-bold">Register Cashier:</span> {activeSession.openedBy || 'Unknown'}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-slate-600 text-[11px] font-bold">
+            <div>
+              <span className="text-emerald-700 uppercase tracking-wider text-[9px] font-bold">Opened At:</span> {
+                activeSession.openedAt?.seconds 
+                  ? new Date(activeSession.openedAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                  : 'Just now'
+              }
+            </div>
+            {profile?.role !== 'captain' && (
+              <>
+                <div className="bg-emerald-600/10 px-2 py-1 rounded-lg border border-emerald-500/15 font-black text-emerald-700 text-[10px]">
+                  Opening Balance: ₹{activeSession.openingCash}
+                </div>
+                <div className="bg-indigo-600/10 px-2 py-1 rounded-lg border border-indigo-500/15 font-black text-indigo-700 text-[10px]">
+                  Drawer Balance: ₹{drawerBalance}
+                </div>
+                <button
+                  onClick={() => setShowCashDropModal(true)}
+                  className="bg-rose-600/10 px-2 py-1 rounded-lg border border-rose-500/15 font-black text-rose-700 text-[10px] hover:bg-rose-600/20"
+                >
+                  Cash Drop
+                </button>
+              </>
+            )}
+            {activeSession.terminal && (
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                Terminal: {activeSession.terminal}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Real-time Payment Breakdown */}
+      {profile?.role !== 'captain' && (
+        <div className="mb-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          {paymentBreakdown}
+        </div>
+      )}
+      
+      {/* Cash Drawer & Audit Logs Section */}
+      {profile?.role !== 'captain' && activeSession && (
+        <div className="mb-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-1">
+             <CashDrawerWidget
+                restaurantId={profile?.restaurantId || ''}
+                openingCash={activeSession.openingCash || 0}
+                cashSales={totalCashSales}
+                cashDrops={cashDrops.reduce((sum, drop) => sum + drop.amount, 0)}
+                expenses={expenses.reduce((sum, exp) => sum + exp.amount, 0)}
+             />
+          </div>
+
+          <div className="lg:col-span-2 bg-white rounded-[2rem] border border-slate-100 shadow-sm p-6 flex flex-col justify-between">
+             <div>
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                   <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 bg-rose-50 rounded-xl flex items-center justify-center text-rose-500">
+                         <Shield size={18} />
+                      </div>
+                      <div>
+                         <h3 className="text-sm font-black text-slate-800 tracking-tight">Critical Actions Audit</h3>
+                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Last 5 security & order interventions</p>
+                      </div>
+                   </div>
+                   <span className="bg-slate-900 text-white text-[8px] font-black uppercase px-2 py-0.5 rounded-full tracking-wider animate-pulse">
+                     Live Stream
+                   </span>
+                </div>
+
+                <div className="space-y-3">
+                   {auditLogs.length === 0 ? (
+                     <div className="py-8 text-center">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">No recent critical events logged</p>
+                        <p className="text-[9px] text-slate-300 font-medium">Any cancellations or modifications will appear here in real-time.</p>
+                     </div>
+                   ) : (
+                     auditLogs.map((log) => {
+                       // Format timestamp
+                       let timeStr = 'recently';
+                       if (log.timestamp) {
+                         try {
+                           const date = log.timestamp.toDate ? log.timestamp.toDate() : new Date(log.timestamp);
+                           timeStr = formatDistanceToNow(date, { addSuffix: true });
+                         } catch (e) {}
+                       }
+
+                       // Visual helper for action types
+                       let tagBg = 'bg-slate-50 text-slate-600 border-slate-100';
+                       let iconBg = 'bg-slate-50 text-slate-450';
+                       let actIcon = <Info size={14} />;
+                       
+                       if (log.action === 'ORDER_CANCELLED') {
+                         tagBg = 'bg-rose-50 text-rose-700 border-rose-100';
+                         iconBg = 'bg-rose-100 text-rose-600';
+                         actIcon = <XCircle size={14} />;
+                       } else if (log.action === 'PRICE_MODIFIED') {
+                         tagBg = 'bg-amber-55 text-amber-700 border-amber-200';
+                         iconBg = 'bg-amber-100 text-amber-600';
+                         actIcon = <AlertCircle size={14} />;
+                       } else if (log.action === 'BILL_GENERATED') {
+                         tagBg = 'bg-indigo-55 text-indigo-700 border-indigo-100';
+                         iconBg = 'bg-indigo-100 text-indigo-600';
+                         actIcon = <Receipt size={14} />;
+                       } else if (log.action === 'SETTING_CHANGED') {
+                         tagBg = 'bg-purple-55 text-purple-700 border-purple-150';
+                         iconBg = 'bg-purple-100 text-purple-600';
+                         actIcon = <Shield size={14} />;
+                       }
+
+                       return (
+                         <div 
+                           key={log.id} 
+                           className="flex items-start gap-3 p-3 rounded-2xl bg-slate-50/40 border border-slate-100 hover:bg-slate-50/80 transition-all"
+                         >
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
+                               {actIcon}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                               <div className="flex items-center justify-between gap-2">
+                                  <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border tracking-wider ${tagBg}`}>
+                                     {log.action.replace('_', ' ')}
+                                  </span>
+                                  <span className="text-[8px] font-bold text-slate-400 capitalize whitespace-nowrap">
+                                     {timeStr}
+                                  </span>
+                               </div>
+                               <p className="text-xs font-black text-slate-700 mt-1 uppercase tracking-tight">
+                                  {log.details}
+                               </p>
+                               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                                  Executed By: <span className="text-slate-600 font-extrabold">{log.userName}</span>
+                               </p>
+                            </div>
+                         </div>
+                       );
+                     })
+                   )}
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
 
       {/* Status Filters */}
       <div className="mb-4">
@@ -280,21 +756,21 @@ const Dashboard = () => {
       </div>
 
       {/* Pending Bills Section */}
-      {activeOrders.filter(o => o.orderStatus === 'billed').length > 0 && (
+      {activeOrders.filter(o => o.orderStatus === 'billed' || o.orderStatus === 'BILL_GENERATED').length > 0 && (
         <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
            <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                  <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600">
                     <Receipt size={18} />
-                 </div>
-                 <h3 className="text-lg font-black text-slate-800 tracking-tight">Pending Bills</h3>
-              </div>
-              <span className="bg-indigo-600 text-white text-[8px] font-black uppercase px-2 py-1 rounded-full">
-                {activeOrders.filter(o => o.orderStatus === 'billed').length} Pending
-              </span>
-           </div>
-           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {activeOrders.filter(o => o.orderStatus === 'billed').map(order => (
+                  </div>
+                  <h3 className="text-lg font-black text-slate-800 tracking-tight">Pending Bills</h3>
+               </div>
+               <span className="bg-indigo-600 text-white text-[8px] font-black uppercase px-2 py-1 rounded-full">
+                 {activeOrders.filter(o => o.orderStatus === 'billed' || o.orderStatus === 'BILL_GENERATED').length} Pending
+               </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+               {activeOrders.filter(o => o.orderStatus === 'billed' || o.orderStatus === 'BILL_GENERATED').map(order => (
                 <div 
                   key={order.id}
                    onClick={() => navigate(`/billing/${order.id}`)}
@@ -337,6 +813,7 @@ const Dashboard = () => {
               occupied: { card: 'bg-rose-50/30 border-rose-100', dot: 'bg-rose-500', text: 'text-rose-600' },
               running: { card: 'bg-amber-50/30 border-amber-200', dot: 'bg-amber-500', text: 'text-amber-600' },
               billed: { card: 'bg-purple-50/50 border-purple-200', dot: 'bg-purple-500', text: 'text-purple-600' },
+              BILLING: { card: 'bg-purple-50/50 border-purple-200', dot: 'bg-purple-500', text: 'text-purple-600' },
               reserved: { card: 'bg-blue-50/50 border-blue-200', dot: 'bg-blue-500', text: 'text-blue-600' },
             }[status] || { card: 'bg-white', dot: 'bg-slate-300', text: 'text-slate-400' };
 
@@ -391,23 +868,75 @@ const Dashboard = () => {
                     </div>
                     
                     {/* Info Badges */}
-                    <div className="flex items-center justify-center gap-0.5 mt-0.5">
-                       <div className="flex items-center gap-0.5 text-[6px] font-black text-slate-400 bg-slate-50/50 px-1 py-0.5 rounded-md border border-slate-100">
-                          <Users size={6} strokeWidth={3} />
-                          <span>{table.guestCount || 0}</span>
+                    <div className="flex items-center justify-center gap-1 mt-0.5">
+                       <div 
+                         onClick={(e) => e.stopPropagation()}
+                         className="flex items-center gap-0.5 text-[8px] font-black text-slate-500 bg-white border border-slate-150 rounded-lg px-1 py-0.5 shadow-sm"
+                       >
+                          <button 
+                            onClick={async () => {
+                              const currentVal = table.guestCount !== undefined ? table.guestCount : 4;
+                              if (currentVal > 1) {
+                                await updateTable(table.id, { guestCount: currentVal - 1 });
+                              }
+                            }}
+                            className="p-0.5 hover:bg-slate-100 hover:text-indigo-600 rounded text-slate-400 transition-all active:scale-75 cursor-pointer"
+                            title="Decrease Guests"
+                          >
+                            <Minus size={8} strokeWidth={3} />
+                          </button>
+                          <span className="flex items-center gap-0.5 min-w-[12px] justify-center px-0.5">
+                            <Users size={8} strokeWidth={2.5} className="text-indigo-500" />
+                            <span>{table.guestCount !== undefined ? table.guestCount : 0}</span>
+                          </span>
+                          <button 
+                            onClick={async () => {
+                              const currentVal = table.guestCount !== undefined ? table.guestCount : 0;
+                              await updateTable(table.id, { guestCount: currentVal + 1 });
+                            }}
+                            className="p-0.5 hover:bg-slate-100 hover:text-indigo-600 rounded text-slate-400 transition-all active:scale-75 cursor-pointer"
+                            title="Increase Guests"
+                          >
+                            <Plus size={8} strokeWidth={3} />
+                          </button>
                        </div>
-                       <div className="flex items-center gap-0.5 text-[6px] font-black text-slate-400 bg-slate-50/50 px-1 py-0.5 rounded-md border border-slate-100">
+                       <div className="flex items-center gap-0.5 text-[8px] font-black text-slate-400 bg-slate-50/50 px-1 py-0.5 rounded-md border border-slate-100">
                           <Clock size={6} strokeWidth={3} />
                           <span>{runningTime}</span>
                        </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center gap-0.5 mt-auto">
-                    <div className="flex items-center gap-0.5 text-[7px] font-bold text-slate-400 bg-slate-50/50 px-1.5 py-0.5 rounded-full border border-slate-100">
-                      <Users size={7} />
-                      <span className="uppercase tracking-[0.05em] font-black">{table.guestCount || 4} Pax</span>
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center gap-1.5 mt-auto bg-white border border-slate-200/70 rounded-full px-2 py-0.5 shadow-sm"
+                  >
+                    <button 
+                      onClick={async () => {
+                        const currentVal = table.guestCount !== undefined ? table.guestCount : 4;
+                        if (currentVal > 1) {
+                          await updateTable(table.id, { guestCount: currentVal - 1 });
+                        }
+                      }}
+                      className="p-0.5 hover:bg-slate-100 hover:text-indigo-600 rounded text-slate-400 transition-all active:scale-75 cursor-pointer"
+                      title="Decrease Guests"
+                    >
+                      <Minus size={9} strokeWidth={3} />
+                    </button>
+                    <div className="flex items-center gap-0.5 text-[8px] font-black text-slate-600 font-mono">
+                      <Users size={9} strokeWidth={2.5} className="text-slate-400" />
+                      <span>{table.guestCount !== undefined ? table.guestCount : 4} Pax</span>
                     </div>
+                    <button 
+                      onClick={async () => {
+                        const currentVal = table.guestCount !== undefined ? table.guestCount : 4;
+                        await updateTable(table.id, { guestCount: currentVal + 1 });
+                      }}
+                      className="p-0.5 hover:bg-slate-100 hover:text-indigo-600 rounded text-slate-400 transition-all active:scale-75 cursor-pointer"
+                      title="Increase Guests"
+                    >
+                      <Plus size={9} strokeWidth={3} />
+                    </button>
                   </div>
                 )}
               </motion.div>
@@ -415,6 +944,101 @@ const Dashboard = () => {
           })}
         </AnimatePresence>
       </div>
+
+      {/* CASH DROP FORM OVERLAY */}
+      <AnimatePresence>
+        {showCashDropModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[10000] overflow-y-auto" onClick={() => setShowCashDropModal(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 p-8 w-full max-w-lg text-left overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 tracking-tight">Record Cash Drop</h2>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Logging partial drawer removal</p>
+                </div>
+                <button
+                  onClick={() => setShowCashDropModal(false)}
+                  className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:bg-slate-100"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="space-y-4 flex-1 text-slate-700">
+                <div>
+                  <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest block mb-1.5 font-sans">
+                    Amount (INR) *
+                  </label>
+                  <input
+                    type="number"
+                    value={dropAmountInput}
+                    onChange={(e) => setDropAmountInput(e.target.value)}
+                    placeholder="e.g. 500"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-indigo-500 transition-colors text-slate-800"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest block mb-1.5 font-sans">
+                    Reason *
+                  </label>
+                  <input
+                    type="text"
+                    value={dropReasonInput}
+                    onChange={(e) => setDropReasonInput(e.target.value)}
+                    placeholder="e.g. Bank deposit, Petty cash"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:bg-white focus:border-indigo-500 transition-colors text-slate-800"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="mt-8 flex gap-3 text-slate-705">
+                <button
+                  onClick={() => setShowCashDropModal(false)}
+                  className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!dropAmountInput || Number(dropAmountInput) <= 0) {
+                      toast.error("Please enter a valid amount.");
+                      return;
+                    }
+                    if (!dropReasonInput.trim()) {
+                      toast.error("Please enter a reason.");
+                      return;
+                    }
+                    setIsDroppingCash(true);
+                    try {
+                      const { addCashDrop } = useCashDropStore.getState();
+                      await addCashDrop({
+                        amount: Number(dropAmountInput),
+                        reason: dropReasonInput.trim()
+                      });
+                      setDropAmountInput('');
+                      setDropReasonInput('');
+                      setShowCashDropModal(false);
+                    } catch (err) {
+                      toast.error("Failed to record cash drop.");
+                    } finally {
+                      setIsDroppingCash(false);
+                    }
+                  }}
+                  disabled={isDroppingCash}
+                  className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 disabled:opacity-50"
+                >
+                  {isDroppingCash ? <Loader2 size={14} className="animate-spin" /> : 'Confirm Cash Drop'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Global Action Popup */}
       <AnimatePresence>
@@ -586,6 +1210,7 @@ const Dashboard = () => {
                               orderId: order.id!,
                               tableNumber: order.tableNumber,
                               restaurantId: order.restaurantId,
+                              items: order.items,
                               total: order.finalAmount || order.totalAmount,
                               requestedBy: profile?.name || 'Captain'
                             });
@@ -951,7 +1576,7 @@ const DashboardBillingDrawer = ({ orderId, onClose }: { orderId: string, onClose
     if (order) {
       setDiscountValue(order.discountAmount || 0);
       setServiceCharge(order.serviceChargeAmount || 0);
-      if (order.orderStatus === 'billed' || order.orderStatus === 'generated') {
+      if (order.orderStatus === 'billed' || order.orderStatus === 'generated' || order.orderStatus === 'BILL_GENERATED') {
          setPayments([{ method: 'CASH', amount: Math.round(order.finalAmount || order.totalAmount) }]);
       }
     }

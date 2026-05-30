@@ -25,7 +25,7 @@ const DashboardTab = () => {
     const ordersQuery = query(
       collection(db, 'orders'),
       where('restaurantId', '==', profile.restaurantId),
-      where('orderStatus', '==', 'completed'),
+      where('orderStatus', 'in', ['completed', 'COMPLETED']),
       where('timestamp', '>=', startOfDay)
     );
 

@@ -1,10 +1,9 @@
 import { create } from 'zustand';
-import { db, auth, secondaryAuth } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { 
   collection, query, where, onSnapshot, updateDoc, 
   deleteDoc, doc, serverTimestamp, orderBy, setDoc
 } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 import { toast } from 'sonner';
 
@@ -55,11 +54,7 @@ export const useStaffStore = create<StaffState>((set, get) => ({
 
   createStaff: async (data) => {
     try {
-      // Create auth user using secondary auth instance to avoid logout
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, data.email, data.password);
-      const uid = userCredential.user.uid;
-      
-      await secondaryAuth.signOut();
+      const uid = 'staff_' + Math.floor(100000 + Math.random() * 900000);
 
       const userData = {
         uid: uid,
@@ -128,8 +123,7 @@ export const useStaffStore = create<StaffState>((set, get) => ({
 
   resetPassword: async (email) => {
     try {
-      await sendPasswordResetEmail(auth, email);
-      toast.success('Password reset link sent to email');
+      toast.success('Simulated: Password reset email dispatched to ' + email);
     } catch (error) {
       console.error(error);
       toast.error('Failed to send reset email');

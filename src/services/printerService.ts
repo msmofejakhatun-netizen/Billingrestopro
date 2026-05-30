@@ -61,6 +61,7 @@ export class PrinterService {
   private btCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
 
   private connectionType: 'BT' | 'USB' | null = null;
+  private isAndroidConnected: boolean = false;
 
   // Standard Bluetooth GATT Service and Characteristic for most thermal printers
   private readonly SERVICE_UUIDS = [
@@ -71,7 +72,26 @@ export class PrinterService {
   private readonly SERVICE_UUID = '000018f0-0000-1000-8000-00805f9b34fb';
   private readonly CHARACTERISTIC_UUID = '00002af1-0000-1000-8000-00805f9b34fb';
 
+  getAndroidBridge(): any {
+    if (typeof window === 'undefined') return null;
+    return (window as any).Android || 
+           (window as any).AndroidBluetooth || 
+           (window as any).BTPrinter || 
+           (window as any).AndroidPrinter || 
+           (window as any).AndroidInterface;
+  }
+
   async scan(): Promise<PrinterDevice> {
+    const androidBridge = this.getAndroidBridge();
+    if (androidBridge) {
+      // On Android, we directly request the saved/paired device via custom dialog or return first paired printer
+      const paired = await this.getPairedDevices();
+      if (paired.length > 0) {
+        return paired[0];
+      }
+      throw new Error('No paired Bluetooth printers available. Please pair a printer in Android Bluetooth settings first.');
+    }
+
     if (!navigator.bluetooth) {
       throw new Error('Bluetooth is not supported in this browser.');
     }
@@ -115,7 +135,38 @@ export class PrinterService {
     const btDevicesList: PrinterDevice[] = [];
     const usbDevicesList: PrinterDevice[] = [];
 
-    if (navigator.bluetooth && 'getDevices' in navigator.bluetooth) {
+    const androidBridge = this.getAndroidBridge();
+    if (androidBridge) {
+      try {
+        let devicesStr = "";
+        if (typeof androidBridge.getPairedPrinters === 'function') {
+          devicesStr = androidBridge.getPairedPrinters();
+        } else if (typeof androidBridge.getPairedDevices === 'function') {
+          devicesStr = androidBridge.getPairedDevices();
+        } else if (typeof androidBridge.getBluetoothDevices === 'function') {
+          devicesStr = androidBridge.getBluetoothDevices();
+        } else if (typeof androidBridge.getDevices === 'function') {
+          devicesStr = androidBridge.getDevices();
+        }
+        
+        if (devicesStr) {
+          const parsed = JSON.parse(devicesStr);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((d: any) => {
+              btDevicesList.push({
+                name: d.name || d.deviceName || 'Android BT Printer',
+                id: d.id || d.address || d.macAddress || d.mac,
+                type: 'BT'
+              });
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Failed to get paired devices from Android bridge', e);
+      }
+    }
+
+    if (btDevicesList.length === 0 && navigator.bluetooth && 'getDevices' in navigator.bluetooth) {
       try {
         // @ts-ignore
         const devices: BluetoothDevice[] = await navigator.bluetooth.getDevices();
@@ -149,6 +200,26 @@ export class PrinterService {
   }
 
   private async connectBT(deviceId?: string): Promise<boolean> {
+    const androidBridge = this.getAndroidBridge();
+    if (androidBridge) {
+      console.log('Connecting via Android bridge to device:', deviceId);
+      try {
+        if (typeof androidBridge.connect === 'function') {
+          await androidBridge.connect(deviceId);
+        } else if (typeof androidBridge.connectPrinter === 'function') {
+          await androidBridge.connectPrinter(deviceId);
+        }
+        
+        // Mock success since native side maintains the connection state
+        this.isAndroidConnected = true;
+        if (this.onStatusChange) this.onStatusChange(true);
+        return true;
+      } catch (e) {
+        console.error('Android bridge connect failed:', e);
+        return false;
+      }
+    }
+
     try {
       if (deviceId && navigator.bluetooth && 'getDevices' in navigator.bluetooth) {
         // @ts-ignore
@@ -230,6 +301,10 @@ export class PrinterService {
   };
 
   async disconnect() {
+    if (this.getAndroidBridge()) {
+      this.isAndroidConnected = false;
+    }
+
     if (this.connectionType === 'BT') {
       if (this.btDevice?.gatt?.connected) {
         this.btDevice.gatt.disconnect();
@@ -244,6 +319,10 @@ export class PrinterService {
   }
 
   isConnected(): boolean {
+    if (this.getAndroidBridge()) {
+      return this.connectionType === 'BT' ? this.isAndroidConnected : usbPrinterService.getStatus() === 'connected';
+    }
+
     if (this.connectionType === 'BT') {
       return !!this.btDevice?.gatt?.connected && !!this.btCharacteristic;
     } else if (this.connectionType === 'USB') {
@@ -261,6 +340,60 @@ export class PrinterService {
   }
 
   async print(data: Uint8Array) {
+    const androidBridge = this.getAndroidBridge();
+    if (androidBridge && this.connectionType === 'BT') {
+      // Find default printer MAC address from localStorage safely
+      let deviceId = '';
+      try {
+        const storedStr = localStorage.getItem('printer-storage');
+        if (storedStr) {
+          const parsed = JSON.parse(storedStr);
+          deviceId = parsed?.state?.defaultPrinter?.id || '';
+        }
+      } catch (e) {
+        console.warn('LocalStorage parse failed for default printer:', e);
+      }
+      
+      const base64 = btoa(Array.from(data).map(c => String.fromCharCode(c)).join(''));
+      const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      console.log('Sending POS content to Android native bridge', { deviceId });
+
+      if (typeof androidBridge.printBase64 === 'function') {
+        androidBridge.printBase64(base64, deviceId);
+        return;
+      } else if (typeof androidBridge.printHex === 'function') {
+        androidBridge.printHex(hex, deviceId);
+        return;
+      } else if (typeof androidBridge.print === 'function') {
+        try {
+          androidBridge.print(deviceId, base64);
+          return;
+        } catch (e) {
+          try {
+            androidBridge.print(base64);
+            return;
+          } catch (e2) {
+            try {
+              androidBridge.print(deviceId, hex);
+              return;
+            } catch (e3) {
+              androidBridge.print(hex);
+              return;
+            }
+          }
+        }
+      } else if (typeof androidBridge.printBytes === 'function') {
+        androidBridge.printBytes(hex, deviceId);
+        return;
+      } else if (typeof androidBridge.sendBytes === 'function') {
+        androidBridge.sendBytes(hex, deviceId);
+        return;
+      } else {
+        throw new Error('No print method found on Android bridge');
+      }
+    }
+
     if (this.connectionType === 'BT') {
       if (!this.btCharacteristic) throw new Error('Bluetooth printer not connected');
       const chunkSize = 512;
@@ -332,7 +465,8 @@ export class PrinterService {
       )
       .bold(false);
 
-    data.items.forEach((item: any) => {
+    const printItems = data.items || [];
+    printItems.forEach((item: any) => {
       const price = isBill ? `${(item.price * item.quantity).toFixed(0)}` : '';
       result.table(
         [
@@ -375,8 +509,9 @@ export class PrinterService {
     result
       .align('center')
       .line(isBill ? (config?.footerMessage || 'Thank You Visit Again') : (kotFooter || 'Kitchen Copy'))
-      .line(isBill ? (config?.thankYouMessage || 'RestoPro Enterprise') : 'RestoPro KOT')
-      .feed(3);
+      .line(isBill ? (config?.thankYouMessage || 'RestoPro Enterprise') : 'RestoPro KOT');
+    
+    result.feed(3);
 
     if (config?.autoCut ?? true) {
       result.cut();

@@ -2,33 +2,33 @@ import { create } from 'zustand';
 import { db, auth } from '../lib/firebase';
 import { 
   collection, addDoc, updateDoc, doc, getDocs,
-  query, where, serverTimestamp, Timestamp, limit
+  query, where, serverTimestamp, Timestamp, limit, orderBy
 } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 import { toast } from 'sonner';
 import { useAuthStore } from './useAuthStore';
 
-export interface AdminShift {
-  id: string;
-  restaurantId: string;
-  shiftId: string; // Display ID or same as doc ID
-  status: 'active' | 'closed';
-  active: boolean;
-  startedBy: string;
-  startedByName: string;
-  startedAt: any;
+export interface DailyShift {
+  id: string; // Document ID
+  shiftId: string;
+  status: 'OPEN' | 'CLOSED';
+  openedAt: any;
   closedAt: any | null;
-  totalSales: number;
-  totalOrders: number;
-  pendingBills: number;
+  openedBy: string; // Cashier Name
+  closedBy: string | null;
+  openingCash: number;
+  closingCash: number;
+  terminal: string;
+  restaurantId: string;
+  notes?: string;
 }
 
 interface ShiftState {
-  activeSession: AdminShift | null;
+  activeSession: DailyShift | null;
   loading: boolean;
   checkActiveSession: () => Promise<void>;
-  startShift: () => Promise<void>;
-  closeShift: () => Promise<void>;
+  startShift: (params: { openingCash: number; cashierName: string; terminalName: string; notes?: string }) => Promise<void>;
+  closeShift: (closingCash?: number) => Promise<void>;
 }
 
 export const useShiftStore = create<ShiftState>((set, get) => ({
@@ -42,6 +42,40 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       return;
     }
 
+    const normalizedRole = (profile.role || "").toUpperCase();
+    if (normalizedRole !== 'CASHIER' && normalizedRole !== 'ADMIN') {
+      console.log(`[SHIFT_STORE_BYPASS] Bypassing active session check for role: ${normalizedRole}`);
+      const bypassedSession: DailyShift = {
+        id: "bypassed-session",
+        shiftId: "BYPASS-SHIFT",
+        status: "OPEN",
+        openedAt: { seconds: Math.floor(Date.now() / 1000) },
+        closedAt: null,
+        openedBy: "Enterprise Mode",
+        closedBy: null,
+        openingCash: 0,
+        closingCash: 0,
+        terminal: "Enterprise Console",
+        restaurantId: profile.restaurantId,
+      };
+      set({ activeSession: bypassedSession, loading: false });
+      return;
+    }
+
+    const cacheKey = `restopro_active_shift_${profile.restaurantId}`;
+
+    // First, attempt to load from local storage cache for immediate offline support
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        console.log("DEBUG: Restored active shift from local cache:", parsed);
+        set({ activeSession: parsed, loading: false });
+      }
+    } catch (e) {
+      console.warn("Failed to check shift inside localStorage cache:", e);
+    }
+
     if (!auth.currentUser) {
       console.warn("checkActiveSession: No auth.currentUser found, waiting...");
       set({ loading: false });
@@ -49,33 +83,63 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     }
 
     try {
-      console.log("DEBUG: Checking active shift for restaurant:", profile.restaurantId);
+      console.log("DEBUG: Fetching active dailyShifts for restaurant:", profile.restaurantId);
       const q = query(
-        collection(db, 'adminShifts'),
+        collection(db, 'dailyShifts'),
         where('restaurantId', '==', profile.restaurantId),
-        where('status', '==', 'active'),
-        where('active', '==', true),
+        where('status', '==', 'OPEN'),
         limit(1)
       );
       const snap = await getDocs(q).catch(e => {
-        handleFirestoreError(e, OperationType.LIST, 'adminShifts');
+        handleFirestoreError(e, OperationType.LIST, 'dailyShifts');
         throw e;
       });
+
       if (!snap.empty) {
-        console.log("DEBUG: Active shift found:", snap.docs[0].id);
-        set({ activeSession: { id: snap.docs[0].id, ...snap.docs[0].data() } as AdminShift });
+        const docData = snap.docs[0].data();
+        const openedAtData = docData.openedAt;
+        
+        // Convert firestore timestamp to serialized object if needed
+        let openedAtVal = null;
+        if (openedAtData) {
+          if (typeof openedAtData.toDate === 'function') {
+            openedAtVal = { seconds: Math.floor(openedAtData.toDate().getTime() / 1000) };
+          } else if (openedAtData.seconds) {
+            openedAtVal = { seconds: openedAtData.seconds };
+          }
+        }
+
+        const activeObj: DailyShift = {
+          id: snap.docs[0].id,
+          shiftId: docData.shiftId || '',
+          status: docData.status as 'OPEN' | 'CLOSED',
+          openedAt: openedAtVal || { seconds: Math.floor(Date.now() / 1000) },
+          closedAt: docData.closedAt || null,
+          openedBy: docData.openedBy || '',
+          closedBy: docData.closedBy || null,
+          openingCash: Number(docData.openingCash) || 0,
+          closingCash: Number(docData.closingCash) || 0,
+          terminal: docData.terminal || '',
+          restaurantId: docData.restaurantId || '',
+          notes: docData.notes || '',
+        };
+
+        console.log("DEBUG: Active dailyShift found in Firestore:", activeObj);
+        set({ activeSession: activeObj });
+        localStorage.setItem(cacheKey, JSON.stringify(activeObj));
       } else {
-        console.log("DEBUG: No active shift found");
+        console.log("DEBUG: No active dailyShift found in Firestore");
         set({ activeSession: null });
+        localStorage.removeItem(cacheKey);
       }
     } catch (e) {
-      console.error("Shift check fail. Auth UID:", auth.currentUser?.uid, "Error:", e);
+      console.error("Firestore shift check failed, using cache status or marking null:", e);
     } finally {
       set({ loading: false });
     }
   },
 
-  startShift: async () => {
+  startShift: async ({ openingCash, cashierName, terminalName, notes }) => {
     const profile = useAuthStore.getState().profile;
     if (!profile?.restaurantId) {
       toast.error('No restaurant information found');
@@ -84,58 +148,62 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
 
     set({ loading: true });
     try {
-      // 1. Double check for active shift
-      const q = query(
-        collection(db, 'adminShifts'),
-        where('restaurantId', '==', profile.restaurantId),
-        where('status', '==', 'active'),
-        where('active', '==', true),
-        limit(1)
-      );
-      const snap = await getDocs(q).catch(e => {
-        handleFirestoreError(e, OperationType.LIST, 'adminShifts');
-        throw e;
-      });
-      
-      if (!snap.empty) {
-        set({ activeSession: { id: snap.docs[0].id, ...snap.docs[0].data() } as AdminShift });
-        toast.info('Shift already active');
-        return;
-      }
+      // Create local timestamp representation for offline usage
+      const shiftId = `SHIFT-${Date.now()}`;
+      const nowSeconds = Math.floor(Date.now() / 1000);
 
-      // 2. Create new admin shift
       const shiftDocData = {
         restaurantId: profile.restaurantId,
-        shiftId: `SHIFT-${Date.now()}`,
-        status: 'active',
-        active: true,
-        startedBy: auth.currentUser?.uid || 'unknown',
-        startedByName: profile.name || 'Unknown',
-        startedAt: serverTimestamp(),
+        shiftId: shiftId,
+        status: 'OPEN',
+        openedBy: cashierName || profile.name || 'Unknown',
+        openedAt: serverTimestamp(),
         closedAt: null,
-        totalSales: 0,
-        totalOrders: 0,
-        pendingBills: 0
+        closedBy: null,
+        openingCash: Number(openingCash) || 0,
+        closingCash: 0,
+        terminal: terminalName || 'POS Terminal',
+        notes: notes || '',
       };
 
-      const docRef = await addDoc(collection(db, 'adminShifts'), shiftDocData).catch(e => {
-        handleFirestoreError(e, OperationType.CREATE, 'adminShifts');
+      // Add to Firestore (will auto-sync if offline)
+      const docRef = await addDoc(collection(db, 'dailyShifts'), shiftDocData).catch(e => {
+        handleFirestoreError(e, OperationType.CREATE, 'dailyShifts');
         throw e;
       });
-      
-      set({ 
-        activeSession: { ...shiftDocData, id: docRef.id, startedAt: { seconds: Math.floor(Date.now()/1000) } } as AdminShift 
-      });
-      toast.success('Shift STARTED Successfully');
+
+      // Update restaurant day status to open
+      await updateDoc(doc(db, 'restaurants', profile.restaurantId), { isDayOpen: true });
+
+      const sessionObj: DailyShift = {
+        id: docRef.id,
+        shiftId: shiftId,
+        status: 'OPEN',
+        openedAt: { seconds: nowSeconds },
+        closedAt: null,
+        openedBy: cashierName,
+        closedBy: null,
+        openingCash: Number(openingCash) || 0,
+        closingCash: 0,
+        terminal: terminalName,
+        restaurantId: profile.restaurantId,
+        notes: notes || '',
+      };
+
+      // Set state and cache locally for offline access
+      set({ activeSession: sessionObj });
+      localStorage.setItem(`restopro_active_shift_${profile.restaurantId}`, JSON.stringify(sessionObj));
+
+      toast.success('Day has been OPENED successfully.');
     } catch (e) {
-      // handleFirestoreError already called in catch blocks
+      console.error("Failed to start shift:", e);
       throw e;
     } finally {
       set({ loading: false });
     }
   },
 
-  closeShift: async () => {
+  closeShift: async (closingCash = 0) => {
     const { activeSession } = get();
     if (!activeSession) return;
 
@@ -143,84 +211,26 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       const profile = useAuthStore.getState().profile;
       if (!profile?.restaurantId) return;
 
-      // 1. Calculate stats since startedAt
-      const startedAt = activeSession.startedAt;
-      const startTimestamp = startedAt.seconds ? Timestamp.fromMillis(startedAt.seconds * 1000) : Timestamp.now();
-      
-      const billQ = query(
-        collection(db, 'bills'),
-        where('restaurantId', '==', profile.restaurantId),
-        where('createdAt', '>=', startTimestamp)
-      );
-      const billSnap = await getDocs(billQ).catch(e => {
-        handleFirestoreError(e, OperationType.LIST, 'bills');
-        throw e;
-      });
-      
-      let stats = {
-        totalSales: 0,
-        totalOrders: 0,
-        pendingBills: 0,
-        totalGst: 0,
-        totalDiscount: 0,
-        expenses: 0
-      };
-
-      billSnap.forEach(d => {
-        const data = d.data();
-        if (data.status === 'cancelled') return;
-        if (data.paymentStatus === 'unpaid') {
-          stats.pendingBills += 1;
-        } else {
-          stats.totalSales += data.finalAmount || 0;
-          stats.totalOrders += 1;
-          stats.totalGst += data.gstAmount || 0;
-          stats.totalDiscount += data.discountAmount || 0;
-        }
-      });
-
-      // Fetch expenses
-      const expenseQ = query(
-        collection(db, 'expenses'),
-        where('restaurantId', '==', profile.restaurantId),
-        where('date', '>=', startTimestamp)
-      );
-      const expenseSnap = await getDocs(expenseQ).catch(e => {
-        handleFirestoreError(e, OperationType.LIST, 'expenses');
-        throw e;
-      });
-      expenseSnap.forEach(d => stats.expenses += d.data().amount || 0);
-
-      // 2. Create Day Report
-      const reportData = {
-        restaurantId: profile.restaurantId,
-        shiftId: activeSession.shiftId,
-        startedAt: activeSession.startedAt,
+      // Update in Firestore
+      await updateDoc(doc(db, 'dailyShifts', activeSession.id), {
         closedAt: serverTimestamp(),
-        ...stats,
-        closedBy: auth.currentUser?.uid || 'unknown',
-        closedByName: profile.name || 'Unknown'
-      };
-      await addDoc(collection(db, 'dayReports'), reportData).catch(e => {
-        handleFirestoreError(e, OperationType.CREATE, 'dayReports');
-        throw e;
-      });
-
-      // 3. Update active session
-      await updateDoc(doc(db, 'adminShifts', activeSession.id), {
-        closedAt: serverTimestamp(),
-        status: 'closed',
-        active: false,
-        ...stats
+        status: 'CLOSED',
+        closedBy: profile.name || auth.currentUser?.email || 'Unknown',
+        closingCash: Number(closingCash) || 0
       }).catch(e => {
-        handleFirestoreError(e, OperationType.UPDATE, `adminShifts/${activeSession.id}`);
+        handleFirestoreError(e, OperationType.UPDATE, `dailyShifts/${activeSession.id}`);
         throw e;
       });
 
+      // Update restaurant day status to closed
+      await updateDoc(doc(db, 'restaurants', profile.restaurantId), { isDayOpen: false });
+
+      // Clear the local state cache entirely
+      localStorage.removeItem(`restopro_active_shift_${profile.restaurantId}`);
       set({ activeSession: null });
-      toast.success('Shift CLOSED successfully and report generated');
+      toast.success('Shift closed successfully');
     } catch (e) {
-      console.error("Close shift error", e);
+      console.error("Close shift error:", e);
       throw e;
     }
   }

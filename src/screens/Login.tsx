@@ -1,69 +1,55 @@
 import React, { useState } from 'react';
-import { auth, db } from '../lib/firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'motion/react';
-import { Mail, Lock, ArrowRight } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useAuthStore } from '../stores/useAuthStore';
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
-  const { continueAsGuest } = useAuthStore();
+  const { loginREST } = useAuthStore();
   const [formData, setFormData] = useState({
-    email: '',
+    restaurantCode: '',
+    email: '', // Username / Email field
     password: ''
   });
   const navigate = useNavigate();
-
-  const handleGuestAccess = async () => {
-    setLoading(true);
-    try {
-      await continueAsGuest();
-      toast.success("Welcome, Guest!");
-      navigate('/');
-    } catch (error: any) {
-      console.error(error);
-      toast.error("Guest access is currently unavailable.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-        await signInWithEmailAndPassword(auth, formData.email, formData.password);
-        toast.success("Welcome back!");
-        navigate('/');
-    } catch (error: any) {
-      console.error("Auth Error:", error.code, error.message);
-      
-      let friendlyMessage = "Authentication failed. Please try again.";
-      
-      switch (error.code) {
-        case 'auth/invalid-email':
-          friendlyMessage = "The email address is not valid.";
-          break;
-        case 'auth/user-disabled':
-          friendlyMessage = "This user account has been disabled.";
-          break;
-        case 'auth/user-not-found':
-          friendlyMessage = "No user found with this email.";
-          break;
-        case 'auth/wrong-password':
-          friendlyMessage = "Incorrect password. Please try again.";
-          break;
-        case 'auth/operation-not-allowed':
-          friendlyMessage = "Email/Password sign-in is not enabled in Firebase Console.";
-          break;
-        case 'auth/invalid-credential':
-          friendlyMessage = "Invalid credentials. Please check your email and password.";
-          break;
+      if (!formData.restaurantCode || !formData.email || !formData.password) {
+        toast.error("All credentials are required.");
+        setLoading(false);
+        return;
       }
-      
+
+      await loginREST(formData.restaurantCode, formData.email, formData.password);
+      toast.success("Welcome back!");
+
+      // Retrieve authenticated profile and route by role immediately
+      const profile = useAuthStore.getState().profile;
+      const role = profile?.role ? profile.role.toUpperCase() : '';
+
+      if (role === 'SUPER_OWNER') {
+        navigate('/');
+      } else if (role === 'OWNER') {
+        navigate('/');
+      } else if (role === 'ADMIN' || role === 'MANAGER') {
+        navigate('/admin');
+      } else if (role === 'CASHIER') {
+        navigate('/pending-bills');
+      } else if (role === 'KITCHEN') {
+        navigate('/kds');
+      } else if (role === 'CAPTAIN') {
+        navigate('/');
+      } else {
+        navigate('/');
+      }
+    } catch (error: any) {
+      console.error("Auth Error:", error.message || error);
+      const friendlyMessage = error.message || "Authentication failed. Please check credentials and try again.";
       toast.error(friendlyMessage, {
         duration: 5000,
       });
@@ -74,7 +60,7 @@ const Login = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-900/10 overflow-hidden border border-slate-100">
+      <div className="w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-900/10 overflow-hidden border border-slate-150">
         <div className="bg-slate-900 p-12 text-center relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600/20 rounded-full blur-3xl -mr-32 -mt-32" />
           <div className="absolute bottom-0 left-0 w-48 h-48 bg-emerald-600/10 rounded-full blur-2xl -ml-24 -mb-24" />
@@ -89,11 +75,24 @@ const Login = () => {
         <form onSubmit={handleAuth} className="p-10 space-y-6">
 
           <div className="relative">
+            <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input
+              type="text"
+              placeholder="Restaurant Code"
+              required
+              value={formData.restaurantCode}
+              className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent rounded-2xl focus:border-indigo-500 focus:bg-white transition-all font-bold text-slate-800 outline-none uppercase"
+              onChange={(e) => setFormData({ ...formData, restaurantCode: e.target.value })}
+            />
+          </div>
+
+          <div className="relative">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input
-              type="email"
-              placeholder="Email ID"
+              type="text"
+              placeholder="Username / Email"
               required
+              value={formData.email}
               className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent rounded-2xl focus:border-indigo-500 focus:bg-white transition-all font-bold text-slate-800 outline-none"
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
             />
@@ -103,8 +102,9 @@ const Login = () => {
             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input
               type="password"
-              placeholder="Security Key"
+              placeholder="Password / Security Key"
               required
+              value={formData.password}
               className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent rounded-2xl focus:border-indigo-500 focus:bg-white transition-all font-bold text-slate-800 outline-none"
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
             />
@@ -118,7 +118,7 @@ const Login = () => {
             {loading ? (
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                <span>Authenticating...</span>
+                <span>Please wait...</span>
               </div>
             ) : (
               <>
@@ -126,20 +126,6 @@ const Login = () => {
                 <ArrowRight size={20} />
               </>
             )}
-          </button>
-          
-          <div className="relative flex items-center justify-center py-2">
-            <div className="w-full border-t border-slate-100"></div>
-            <span className="bg-white px-4 text-[10px] font-black text-slate-300 uppercase tracking-widest whitespace-nowrap">Order without account</span>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleGuestAccess}
-            disabled={loading}
-            className="w-full bg-white border-2 border-slate-100 hover:border-indigo-500 hover:text-indigo-600 text-slate-500 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] h-[56px] disabled:opacity-50"
-          >
-            Browse Menu as Guest
           </button>
 
         </form>

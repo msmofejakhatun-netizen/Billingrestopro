@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 const PrinterSettings = () => {
   const { updateProfile, profile, loading: authLoading } = useAuthStore();
   const [activeType, setActiveType] = useState<'BT' | 'USB'>('BT');
+  const [troubleshootTab, setTroubleshootTab] = useState<'windows' | 'mac' | 'linux' | 'general'>('windows');
 
   const { 
     defaultPrinter, 
@@ -414,6 +415,114 @@ const PrinterSettings = () => {
             </div>
           </div>
         </motion.div>
+
+        {/* Interactive OS Driver Troubleshooting Panel */}
+        {activeType === 'USB' && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`rounded-[2.5rem] p-7 border-2 ${
+              usbStatus === 'failed' 
+                ? 'border-rose-200 bg-rose-50/20' 
+                : 'border-amber-100 bg-amber-50/5'
+            }`}
+          >
+            <div className="flex items-start gap-3.5 mb-5">
+              <div className={`p-2.5 rounded-2xl shrink-0 ${
+                usbStatus === 'failed' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'
+              }`}>
+                <Info size={20} />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-slate-900 uppercase tracking-tight">
+                  {usbStatus === 'failed' 
+                    ? '⚠️ Access Blocked: USB Driver Limitation Detected' 
+                    : 'USB Connection & Driver Assistant'}
+                </h3>
+                <p className="text-[10px] text-slate-500 font-semibold leading-relaxed mt-1">
+                  Browsers (via WebUSB) cannot interface with printers claimed by native OS spoolers. Choose your platform below to resolve:
+                </p>
+              </div>
+            </div>
+
+            {/* Tabs selector */}
+            <div className="flex bg-slate-100 p-1 rounded-xl gap-1 mb-4">
+              {(['windows', 'mac', 'linux', 'general'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setTroubleshootTab(tab)}
+                  className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all h-[36px] cursor-pointer flex items-center justify-center ${
+                    troubleshootTab === tab 
+                      ? 'bg-slate-950 text-white shadow-sm font-black' 
+                      : 'text-slate-400 hover:text-slate-600 font-bold'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+            <div className="space-y-3 pb-2 text-slate-700 text-[10px] font-semibold leading-relaxed">
+              {troubleshootTab === 'windows' && (
+                <div className="space-y-2">
+                  <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100/50 text-[9.5px]">
+                    <span className="font-extrabold text-amber-800">Why it fails:</span> Windows automatically locks the TM-m30II printer under its system <code className="font-mono bg-amber-100/50 px-1 py-0.2 rounded font-black text-rose-600">usbprint.sys</code> driver which denies WebUSB permission.
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1.5 text-slate-600 font-medium text-left">
+                    <li>Download the free utility <a href="https://zadig.akeo.ie/" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-black underline hover:text-indigo-800 inline-flex items-center gap-1">Zadig (zadig.akeo.ie) 🔗</a>.</li>
+                    <li>Connect the USB printer to your PC and switch it <span className="font-extrabold text-slate-900">ON</span>.</li>
+                    <li>Open Zadig, click <span className="font-extrabold text-slate-900">Options</span> &gt; check <span className="font-extrabold text-slate-900">List All Devices</span>.</li>
+                    <li>Select <span className="font-extrabold text-slate-900">TM-m30II</span> (VID: <code className="font-mono bg-slate-100 px-0.5">1208</code>, PID: <code className="font-mono bg-slate-100 px-0.5">3626</code>) from the main drop-down menu.</li>
+                    <li>For target driver (right-side of driver replacement arrow), select <span className="font-extrabold text-indigo-600">WinUSB</span>.</li>
+                    <li>Click <span className="font-extrabold text-emerald-600 uppercase">Replace Driver</span> (or Reinstall Driver) and wait 30 seconds.</li>
+                    <li>Turn your printer OFF and ON again, then scan below to connect successfully!</li>
+                  </ol>
+                </div>
+              )}
+
+              {troubleshootTab === 'mac' && (
+                <div className="space-y-2">
+                  <div className="bg-slate-50 p-2.5 rounded-xl text-[9.5px]">
+                    <span className="font-extrabold text-indigo-900">Why it fails:</span> macOS delegates printer control to CUPS spoolers automatically.
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1.5 text-slate-600 font-medium text-left">
+                    <li>Navigate to <span className="font-extrabold text-slate-900">System Settings &gt; Printers & Scanners</span>.</li>
+                    <li>Ensure there are no pending or active print jobs inside the queue.</li>
+                    <li>Try deleting/pausing the active print queue referencing TM-m30II.</li>
+                    <li>Disconnect and reconnect your USB cable.</li>
+                    <li>Restart Chrome/Edge to release system handles, and scan again below.</li>
+                  </ol>
+                </div>
+              )}
+
+              {troubleshootTab === 'linux' && (
+                <div className="space-y-2">
+                  <div className="bg-slate-50 p-2.5 rounded-xl text-[9.5px]">
+                    <span className="font-extrabold text-slate-800">Why it fails:</span> Linux systems default USB dev permission limits for non-root users.
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1.5 text-slate-600 font-medium text-left">
+                    <li>Create your custom rules file: <code className="bg-slate-100 font-mono text-[9px] px-1 py-0.5 rounded text-indigo-600">sudo nano /etc/udev/rules.d/99-epson.rules</code></li>
+                    <li>Paste the following exact string rule: <br/><code className="bg-slate-900 text-teal-400 font-mono text-[8.5px] block my-1 p-2 rounded select-all font-bold">{"SUBSYSTEM==\"usb\", ATTR{idVendor}==\"1208\", MODE=\"0666\""}</code></li>
+                    <li>Save, exit, and reload: <code className="bg-slate-100 font-mono text-[9px] px-1 py-0.5 rounded block my-1 text-slate-600 font-mono">sudo udevadm control --reload-rules && sudo udevadm trigger</code></li>
+                    <li>Replug the USB connection cable and try again!</li>
+                  </ol>
+                </div>
+              )}
+
+              {troubleshootTab === 'general' && (
+                <div className="space-y-2 text-slate-600 font-medium text-left">
+                  <ul className="list-disc list-inside space-y-1.5">
+                    <li><span className="font-extrabold text-slate-900">Only One Claim Allowed:</span> WebUSB is exclusive. Ensure no other browser tabs, POS apps, or test tools are open or claiming the device.</li>
+                    <li><span className="font-extrabold text-slate-900">Port Check:</span> Desktop computer towers often prefer direct rear motherboard ports over unstable USB front-panel hubs.</li>
+                    <li><span className="font-extrabold text-slate-900">Hardware Level Reset:</span> Click the <span className="font-extrabold text-rose-600">Reset USB Permissions</span> button below to wipe cached preferences and start afresh.</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
 
         {/* Browser Support Warning */}
         {activeType === 'USB' && !(navigator as any).usb && (

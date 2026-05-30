@@ -1,0 +1,114 @@
+version: "3.8"
+
+services:
+  # Multi-Instance express servers scaled behind Nginx load balancer
+  restopro_backend_node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: restopro_app_node
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - BOOT_API=true
+      - BOOT_WORKER=false
+      - MONGO_URI=mongodb://mongo1:27017,mongo2:27018,mongo3:27019/restopro_prod?replicaSet=rsProd
+      - REDIS_HOST=redis_cache_store
+      - REDIS_PORT=6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+      - redis_cache_store
+    ports:
+      - "3000:3000"
+
+  # Background task queue worker processor running in isolation
+  restopro_background_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: restopro_worker_node
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - BOOT_API=false
+      - BOOT_WORKER=true
+      - MONGO_URI=mongodb://mongo1:27017,mongo2:27018,mongo3:27019/restopro_prod?replicaSet=rsProd
+      - REDIS_HOST=redis_cache_store
+      - REDIS_PORT=6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+      - redis_cache_store
+
+  # Redis store as the distributed lock, event queue, and Socket.IO adapter broker
+  redis_cache_store:
+    image: redis:7.2-alpine
+    container_name: restopro_redis
+    restart: always
+    command: redis-server --appendonly yes --requirepass restopro_secure_pass123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_volume:/data
+
+  # Production MongoDB cluster (Replica Set for HA state compliance and data reliability)
+  mongo1:
+    image: mongo:6.0
+    container_name: restopro_mongo_primary
+    restart: always
+    command: mongod --replSet rsProd --bind_ip_all
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1_data:/data/db
+
+  mongo2:
+    image: mongo:6.0
+    container_name: restopro_mongo_replica_1
+    restart: always
+    command: mongod --replSet rsProd --bind_ip_all
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2_data:/data/db
+
+  mongo3:
+    image: mongo:6.0
+    container_name: restopro_mongo_replica_2
+    restart: always
+    command: mongod --replSet rsProd --bind_ip_all
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3_data:/data/db
+
+  # Nginx SSL / Load Balancer Edge proxy with rate limiting and connection pooling
+  nginx_edge_router:
+    image: nginx:stable-alpine
+    container_name: restopro_nginx_edge
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - restopro_backend_node
+
+volumes:
+  redis_data_volume:
+    driver: local
+  mongo1_data:
+    driver: local
+  mongo2_data:
+    driver: local
+  mongo3_data:
+    driver: local

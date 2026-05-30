@@ -25,6 +25,9 @@ export interface Restaurant {
   logo?: string;
   active: boolean;
   createdAt: any;
+  status?: 'ACTIVE' | 'DISABLED' | 'DELETED';
+  disabledAt?: any;
+  disabledBy?: string;
   
   // Enterprise & Subscription
   subscriptionPlan: 'basic' | 'pro' | 'enterprise';
@@ -49,6 +52,8 @@ interface RestaurantState {
   subscribeToRestaurant: (id: string) => () => void;
   createRestaurant: (data: Partial<Restaurant>, adminData: any) => Promise<void>;
   updateRestaurant: (id: string, data: Partial<Restaurant>) => Promise<void>;
+  enableRestaurant: (id: string) => Promise<void>;
+  disableRestaurant: (id: string, disabledBy?: string) => Promise<void>;
   archiveRestaurant: (id: string) => Promise<void>;
   deleteRestaurant: (id: string) => Promise<void>;
 }
@@ -89,7 +94,9 @@ export const useRestaurantStore = create<RestaurantState>((set, get) => ({
     );
 
     return onSnapshot(q, (snapshot) => {
-      const restaurants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Restaurant));
+      const restaurants = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Restaurant))
+        .filter(r => r.status !== 'DELETED');
       set({ restaurants, loading: false });
       
       // If none selected, and we have restaurants, select first one by default
@@ -108,29 +115,33 @@ export const useRestaurantStore = create<RestaurantState>((set, get) => ({
 
     try {
       const { setDoc, doc, serverTimestamp, updateDoc } = await import('firebase/firestore');
-      const { createUserWithEmailAndPassword } = await import('firebase/auth');
       const resId = `RESTO-${Math.floor(1000 + Math.random() * 9000)}`;
+      const adminId = "admin_" + Math.floor(100000 + Math.random() * 900000);
+      const passHash = btoa(adminData.password);
 
-      // 1. Create Admin Auth Account
-      const adminCreds = await createUserWithEmailAndPassword(auth, adminData.email, adminData.password);
-      
-      // 2. Create Restaurant
+      // 1. Create Restaurant
       await setDoc(doc(db, 'restaurants', resId), {
         ...data,
         restaurantCode: resId,
         ownerId: user.uid,
         ownerEmail: user.email,
-        adminId: adminCreds.user.uid,
+        adminId: adminId,
         adminEmail: adminData.email.toLowerCase(),
         active: true,
+        status: 'ACTIVE',
+        disabledAt: null,
+        disabledBy: '',
         createdAt: serverTimestamp(),
       });
 
-      // 3. Create Admin User document
-      await setDoc(doc(db, 'users', adminCreds.user.uid), {
-        uid: adminCreds.user.uid,
+      // 2. Create Admin User document
+      await setDoc(doc(db, 'users', adminId), {
+        uid: adminId,
         name: adminData.name,
         email: adminData.email.toLowerCase(),
+        username: adminData.email.split("@")[0],
+        passwordHash: passHash,
+        passwordPlain: adminData.password,
         role: 'admin',
         restaurantId: resId,
         active: true,
@@ -164,36 +175,57 @@ export const useRestaurantStore = create<RestaurantState>((set, get) => ({
 
   deleteRestaurant: async (id) => {
     try {
-      const { getDocs, writeBatch } = await import('firebase/firestore');
-      const batch = writeBatch(db);
-
-      // Cascading deletions for associated collections
-      const collectionsToCleanup = [
-        'menuItems', 
-        'categories', 
-        'tables', 
-        'orders', 
-        'settings', 
-        'users',
-        'captains',
-        'admins'
-      ];
+      const user = auth.currentUser;
+      if (!user) throw new Error("No user logged in");
+      const token = await user.getIdToken(true);
       
-      for (const colName of collectionsToCleanup) {
-        const q = query(collection(db, colName), where('restaurantId', '==', id));
-        const snapshot = await getDocs(q);
-        snapshot.forEach((d) => {
-          batch.delete(d.ref);
-        });
+      const response = await fetch(`/api/restaurants/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to delete restaurant');
       }
+      
+      toast.success('Restaurant deleted successfully');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete restaurant');
+      throw error;
+    }
+  },
 
-      // Finally delete the restaurant document themselves
-      batch.delete(doc(db, 'restaurants', id));
-
-      await batch.commit();
-      toast.success('Restaurant and all associated data purged successfully');
+  enableRestaurant: async (id) => {
+    try {
+      await updateDoc(doc(db, 'restaurants', id), {
+        status: 'ACTIVE',
+        active: true,
+        disabledAt: null,
+        disabledBy: null,
+        updatedAt: serverTimestamp()
+      });
+      toast.success('Restaurant enabled successfully');
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `restaurants/${id}`);
+      handleFirestoreError(error, OperationType.UPDATE, `restaurants/${id}`);
+      throw error;
+    }
+  },
+
+  disableRestaurant: async (id, disabledBy = "Super Owner") => {
+    try {
+      await updateDoc(doc(db, 'restaurants', id), {
+        status: 'DISABLED',
+        active: false,
+        disabledAt: serverTimestamp(),
+        disabledBy,
+        updatedAt: serverTimestamp()
+      });
+      toast.success('Restaurant disabled successfully');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `restaurants/${id}`);
       throw error;
     }
   },

@@ -34,12 +34,16 @@ const OrderHistory = () => {
     }
     try {
       await cancelOrder(selectedOrder.id, cancelReason);
-      toast.success('Order cancelled successfully');
       setSelectedOrder(null);
       setIsCancelling(false);
       setCancelReason('');
     } catch (e) {
-      toast.error('Failed to cancel order');
+      const isBilled = ['BILLED', 'BILL_GENERATED', 'GENERATED', 'PENDING_PAYMENT'].includes((selectedOrder?.orderStatus || '').toUpperCase()) || !!selectedOrder?.billed;
+      if (isBilled) {
+        toast.error('Unable to cancel billed order');
+      } else {
+        toast.error('Failed to cancel order');
+      }
     }
   };
 
@@ -87,9 +91,9 @@ const OrderHistory = () => {
       let results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
       
       if (statusFilter !== 'all') {
-        results = results.filter(o => o.orderStatus === statusFilter);
+        results = results.filter(o => o.orderStatus?.toLowerCase() === statusFilter.toLowerCase());
       } else {
-        results = results.filter(o => o.orderStatus === 'completed' || o.orderStatus === 'cancelled');
+        results = results.filter(o => o.orderStatus?.toLowerCase() === 'completed' || o.orderStatus?.toLowerCase() === 'cancelled');
       }
 
       setOrders(results);
@@ -103,7 +107,7 @@ const OrderHistory = () => {
   }, [dateRange, statusFilter, profile]);
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'completed': return 'text-emerald-600 bg-emerald-50 border-emerald-100';
       case 'cancelled': return 'text-rose-600 bg-rose-50 border-rose-100';
       default: return 'text-slate-400 bg-slate-50 border-slate-100';

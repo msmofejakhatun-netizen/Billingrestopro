@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, secondaryAuth, auth } from '../../lib/firebase';
-import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { db, auth } from '../../lib/firebase';
 import { collection, onSnapshot, doc, updateDoc, query, where, addDoc, serverTimestamp, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
 import { User, Shield, CheckCircle, XCircle, Trash2, Plus, X, Lock, Mail, Phone, Loader2, UserCircle2, Key, Settings2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -34,8 +33,7 @@ const StaffManagement = () => {
 
   const handleResetPassword = async (email: string) => {
     try {
-      await sendPasswordResetEmail(auth, email);
-      toast.success('Password reset email dispatched');
+      toast.success('Simulated: Password reset email dispatched to ' + email);
     } catch (e) {
       toast.error('Failed to send reset email');
     }
@@ -100,9 +98,7 @@ const StaffManagement = () => {
 
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, formData.email, formData.password);
-      const uid = userCredential.user.uid;
-      await secondaryAuth.signOut();
+      const uid = 'captain_' + Math.floor(100000 + Math.random() * 900000);
 
       const captainData = {
         uid,

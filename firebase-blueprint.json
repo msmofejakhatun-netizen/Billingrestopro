@@ -513,6 +513,54 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["restaurantId", "customerName", "reservationTime", "status", "createdAt"]
+    },
+    "DailyShift": {
+      "title": "DailyShift",
+      "description": "Daily cashier or shift session tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shiftId": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "CLOSED"] },
+        "openedAt": { "type": "string", "format": "date-time" },
+        "closedAt": { "type": "string", "format": "date-time" },
+        "openedBy": { "type": "string" },
+        "closedBy": { "type": "string" },
+        "openingCash": { "type": "number" },
+        "closingCash": { "type": "number" },
+        "terminal": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["shiftId", "status", "openedBy", "openingCash", "closingCash", "terminal", "restaurantId"]
+    },
+    "PrintTask": {
+      "title": "PrintTask",
+      "description": "Printed KOT or Bill receipt tasks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["KOT", "BILL", "SETTLEMENT"] },
+        "orderId": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "requestedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "processing", "completed", "failed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "orderId", "tableNumber", "restaurantId", "requestedBy", "status"]
+    },
+    "DrawerLog": {
+      "title": "DrawerLog",
+      "description": "Log of expected cash drawer balance periodically recorded",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "expectedCash": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "expectedCash"]
     }
   },
   "firestore": {
@@ -541,6 +589,9 @@
     "billingConfigurations": { "schema": "BillingConfiguration", "description": "Restaurant-specific billing and printing settings" },
     "reservations": { "schema": "Reservation", "description": "Table reservations" },
     "enterprise": { "schema": "Enterprise", "description": "Enterprise-wide configuration" },
-    "authorizedDevices": { "schema": "AuthorizedDevice", "description": "Lincensed devices control" }
+    "authorizedDevices": { "schema": "AuthorizedDevice", "description": "Lincensed devices control" },
+    "dailyShifts": { "schema": "DailyShift", "description": "Cashier daily shift sessions" },
+    "printQueue": { "schema": "PrintTask", "description": "KOT and bill printing jobs queue" },
+    "drawerLogs": { "schema": "DrawerLog", "description": "Log of expected cash drawer balances" }
   }
 }

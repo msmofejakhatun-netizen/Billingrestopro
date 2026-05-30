@@ -1,6 +1,7 @@
 import { collection, doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db as dbCloud } from "../lib/firebase";
 import { dbLocal, LocalOrder } from "../lib/db";
+import { useAuthStore } from "../stores/useAuthStore";
 
 class SyncService {
   private isSyncing = false;
@@ -56,16 +57,51 @@ class SyncService {
       // Use localOrder.id (temp uuid) as document ID in Firestore
       const orderRef = doc(dbCloud, 'orders', localOrder.id);
       
-      const { localId, synced, syncError, ...firestoreData } = localOrder;
+      const profile = useAuthStore.getState().profile;
       
-      // Convert any local dates to server timestamps if needed
-      // For simplicity, we trust the local timestamp if it's already a Date
+      // Prepare clean data for Firestore that satisfies isValidOrder
+      const cleanOrderData: any = {
+        tableNumber: String((localOrder as any).tableNumber || localOrder.tableName || "Unknown"),
+        tableId: String(localOrder.tableId || "unknown-table-id"),
+        items: localOrder.items || [],
+        subtotal: Number(localOrder.subtotal || 0),
+        totalAmount: Number((localOrder as any).totalAmount || localOrder.total || localOrder.subtotal || 0),
+        orderStatus: String(localOrder.orderStatus || 'running'),
+        paymentStatus: String(localOrder.paymentStatus || 'unpaid'),
+        restaurantId: String(localOrder.restaurantId || profile?.restaurantId || ""),
+        captainId: String((localOrder as any).captainId || profile?.uid || "unknown-captain-id"),
+        captainName: String((localOrder as any).captainName || profile?.name || "Captain"),
+        timestamp: (localOrder as any).timestamp ? ((localOrder as any).timestamp instanceof Date ? (localOrder as any).timestamp : new Date((localOrder as any).timestamp)) : (localOrder.createdAt ? new Date(localOrder.createdAt) : new Date()),
+        updatedAt: serverTimestamp() // Ensure server clock is master
+      };
+
+      // Keep only optional allowed fields if present
+      const optionalKeys = [
+        'kotHistory',
+        'gstAmount',
+        'discountAmount',
+        'serviceChargeAmount',
+        'finalAmount',
+        'paymentMethod',
+        'payments',
+        'kotStatus',
+        'paidAmount',
+        'balanceAmount',
+        'billed',
+        'lastBillId',
+        'orderNotes',
+        'cancellationReason',
+        'billedAt',
+        'completedAt'
+      ];
       
-      await setDoc(orderRef, {
-        ...firestoreData,
-        updatedAt: serverTimestamp(), // Ensure server clock is master
-        isSynced: true
-      }, { merge: true });
+      for (const key of optionalKeys) {
+        if ((localOrder as any)[key] !== undefined) {
+          cleanOrderData[key] = (localOrder as any)[key];
+        }
+      }
+      
+      await setDoc(orderRef, cleanOrderData, { merge: true });
 
       // Update local status to synced
       await dbLocal.orders.update(localOrder.localId!, { synced: 1, syncError: undefined });

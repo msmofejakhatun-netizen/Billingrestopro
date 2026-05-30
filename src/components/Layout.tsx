@@ -1,6 +1,6 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Menu, Building2, Utensils, ChevronDown, User, LogOut, Store } from 'lucide-react';
+import { Menu, Building2, Utensils, ChevronDown, User, LogOut, Store, Shield } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useRestaurantStore } from '../stores/useRestaurantStore';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -20,12 +20,23 @@ import { EnterpriseHealthMonitor } from './EnterpriseHealthMonitor';
 const Layout = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { profile, subscribeProfile, setRestaurant } = useAuthStore();
+  const { profile, impersonatedProfile, subscribeProfile, setRestaurant } = useAuthStore();
+  const setImpersonatedProfile = useAuthStore(state => state.setImpersonatedProfile);
   const { restaurants, subscribe: subscribeRestaurants, currentRestaurant } = useRestaurantStore();
   const { config } = useConfigStore();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    let unsubRestaurant: (() => void) | undefined;
+    if (profile?.restaurantId) {
+       unsubRestaurant = useRestaurantStore.getState().subscribeToRestaurant(profile.restaurantId);
+    }
+    return () => {
+       if (unsubRestaurant) unsubRestaurant();
+    };
+  }, [profile?.restaurantId]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -125,6 +136,46 @@ const Layout = () => {
     navigate('/owner');
   };
 
+  const isRestaurantDisabled = currentRestaurant?.status === 'DISABLED' || (currentRestaurant && !currentRestaurant.active);
+  const isBlocked = !!isRestaurantDisabled && (
+    profile?.role === 'admin' || profile?.role === 'ADMIN' ||
+    profile?.role === 'captain' || profile?.role === 'CAPTAIN' ||
+    profile?.role === 'kitchen' || profile?.role === 'KITCHEN' ||
+    profile?.role === 'cashier' || profile?.role === 'CASHIER'
+  );
+
+  if (isBlocked) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+        <div className="w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl p-10 border border-slate-200 relative overflow-hidden">
+           <div className="absolute top-0 left-0 right-0 h-2 bg-rose-500" />
+           <div className="w-20 h-20 bg-rose-50 text-rose-600 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-lg shadow-rose-100/50">
+              <Shield size={36} />
+           </div>
+           
+           <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight mb-4">
+              Access Blocked
+           </h2>
+           
+           <p className="text-rose-700 text-xs font-black leading-relaxed mb-8 bg-rose-50 p-4 border border-rose-100 rounded-2xl">
+              Restaurant temporarily disabled by Super Owner
+           </p>
+
+           <p className="text-slate-400 text-[11px] leading-relaxed mb-8">
+              Your restaurant node (<span className="text-slate-700 font-extrabold">{currentRestaurant?.restaurantName || 'REPOS'}</span>) has been administrative locked. Please contact your administrator or Super Owner for license recovery.
+           </p>
+
+           <button
+             onClick={() => useAuthStore.getState().signOut()}
+             className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-4 rounded-xl transition-all uppercase tracking-widest text-[#FFF] text-xs flex items-center justify-center gap-2 shadow-lg shadow-slate-100 cursor-pointer"
+           >
+              <LogOut size={14} /> Exit System
+           </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen bg-[#F8FAFC]">
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
@@ -152,6 +203,13 @@ const Layout = () => {
             {profile?.name?.charAt(0)}
           </div>
         </header>
+
+        {impersonatedProfile && (
+          <div className="bg-amber-100 border-b border-amber-200 px-6 py-3 flex items-center justify-between text-amber-900 text-[10px] font-black uppercase tracking-widest sticky top-0 z-30">
+            <span>Impersonating: <strong className="text-amber-950">{impersonatedProfile.name}</strong> ({impersonatedProfile.role})</span>
+            <button onClick={() => setImpersonatedProfile(null)} className="underline hover:text-amber-700 transition-all font-black">Stop Impersonation</button>
+          </div>
+        )}
 
         {/* Global Dashboard Header & Switcher (Visible on both) */}
         <div className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between sticky top-0 z-30 hidden lg:flex h-20">

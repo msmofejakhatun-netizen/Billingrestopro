@@ -1,0 +1,22 @@
+import Restaurant from "../models/Restaurant";
+import Branch from "../models/Branch";
+import Captain from "../models/Captain";
+import Role from "../models/Role";
+import Table from "../models/Table";
+import { MenuCategory, MenuItem } from "../models/Menu";
+import { Order, KOT, Bill, Settlement } from "../models/Order";
+import DaySession from "../models/DaySession";
+import { GenericRepository } from "./GenericRepository";
+
+export const restaurantRepo = new GenericRepository(Restaurant, "restaurants");
+export const branchRepo = new GenericRepository(Branch, "branches");
+export const captainRepo = new GenericRepository(Captain, "captains");
+export const roleRepo = new GenericRepository(Role, "roles");
+export const tableRepo = new GenericRepository(Table, "tables");
+export const menuCategoryRepo = new GenericRepository(MenuCategory, "menuCategories");
+export const menuItemRepo = new GenericRepository(MenuItem, "menuItems");
+export const orderRepo = new GenericRepository(Order, "orders");
+export const kotRepo = new GenericRepository(KOT, "kots");
+export const billRepo = new GenericRepository(Bill, "bills");
+export const settlementRepo = new GenericRepository(Settlement, "settlements");
+export const daySessionRepo = new GenericRepository(DaySession, "daySessions");

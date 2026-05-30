@@ -1,5 +1,4 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -9,7 +8,6 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-const secondaryApp = initializeApp(firebaseConfig, 'EmployeeManagement');
 
 // @ts-ignore - firestoreDatabaseId is in the config but may not be in the type
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -17,16 +15,64 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 // Enable Offline Persistence
 enableIndexedDbPersistence(db).catch((err) => {
   if (err.code === 'failed-precondition') {
-    // Multiple tabs open, persistence can only be enabled in one tab at a time.
     console.warn("Firestore persistence failed-precondition: Multiple tabs open.");
   } else if (err.code === 'unimplemented') {
-    // The current browser does not support all of the features required to enable persistence
     console.warn("Firestore persistence unimplemented in this browser.");
   }
 });
 
-export const auth = getAuth(app);
-export const secondaryAuth = getAuth(secondaryApp);
+// Custom lightweight Mock Auth that behaves exactly like Firebase Auth but backs to localStorage and REST
+class MockAuth {
+  private listeners: ((user: any) => void)[] = [];
+
+  get currentUser() {
+    const stored = localStorage.getItem('restopro_profile');
+    if (!stored) return null;
+    try {
+      const profile = JSON.parse(stored);
+      return {
+        uid: profile.uid,
+        email: profile.email || `${profile.username || 'staff'}@restopro.com`,
+        displayName: profile.name,
+        role: profile.role,
+        isAnonymous: false,
+        getIdToken: async (force?: boolean) => {
+          return localStorage.getItem('restopro_token') || '';
+        }
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  onAuthStateChanged(callback: (user: any) => void) {
+    this.listeners.push(callback);
+    // Immediately invoke callback with the current state to bootstrap the app instantly!
+    setTimeout(() => {
+      callback(this.currentUser);
+    }, 0);
+
+    // Return an unsubscribe function
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== callback);
+    };
+  }
+
+  // Trigger when auth state changes
+  notifyStateChange() {
+    const user = this.currentUser;
+    this.listeners.forEach(cb => {
+      try {
+        cb(user);
+      } catch (e) {
+        console.error(e);
+      }
+    });
+  }
+}
+
+export const auth = new MockAuth() as any;
+export const secondaryAuth = new MockAuth() as any;
 
 async function testConnection() {
   try {

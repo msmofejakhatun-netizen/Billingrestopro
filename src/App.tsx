@@ -14,6 +14,7 @@ import Admin from './screens/Admin';
 import OrderHistory from './screens/OrderHistory';
 import Analytics from './screens/Analytics';
 import OwnerDashboard from './screens/OwnerDashboard';
+import OwnerManagement from './screens/OwnerManagement';
 import UserManagement from './screens/UserManagement';
 import RestaurantManagement from './screens/RestaurantManagement';
 import Settings from './screens/Settings';
@@ -34,14 +35,45 @@ import BranchManagement from './screens/BranchManagement';
 import MerchantMobileApp from './screens/MerchantMobileApp';
 import AIInsights from './screens/AIInsights';
 import FranchiseDashboard from './screens/FranchiseDashboard';
+import SystemObservability from './screens/SystemObservability';
 import Layout from './components/Layout';
 import { RoleGuard } from './components/RoleGuard';
 import { Toaster } from 'sonner';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const { user, profile, loading } = useAuthStore();
+  const { user, profile, loading, error, init, setError } = useAuthStore();
   const location = useLocation();
   
+  if (error) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-900 p-4">
+        <div className="w-full max-w-sm p-8 bg-slate-950 rounded-2xl border border-slate-800 text-center space-y-6">
+          <div className="text-rose-500 mx-auto w-16 h-16 flex items-center justify-center">
+             <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-white text-xl font-black uppercase">Unable to connect to server</h2>
+          <p className="text-slate-400 text-xs">Please ensure you have an active internet connection and try again.</p>
+          <div className="space-y-3">
+            <button 
+              onClick={() => { setError(null); init(); }}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs uppercase"
+            >
+              Retry Connection
+            </button>
+            <button 
+              onClick={() => window.location.href = '/settings'}
+              className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-bold text-xs uppercase"
+            >
+              Server Settings
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) return (
     <div className="flex h-screen w-full items-center justify-center bg-gray-50">
       <div className="h-12 w-12 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent"></div>
@@ -50,13 +82,46 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   
   if (!user) return <Navigate to="/login" />;
 
-  // Redirect owner to Owner Dashboard if no restaurant selected, unless they are already going there
-  if (profile?.role === 'owner' && !profile.restaurantId && !location.pathname.startsWith('/owner')) {
+  // Display strict lock screen overlay if the root status is disabled or suspended
+  if (profile && (profile.active === false || (profile as any).status === 'DISABLED' || (profile as any).status === 'SUSPENDED')) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-900 p-4 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-rose-500/10 rounded-full blur-3xl -mr-48 -mt-48" />
+        <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl -ml-48 -mb-48" />
+        
+        <div className="w-full max-w-md bg-slate-950 rounded-[2.5rem] border border-slate-800 p-10 text-center relative z-10 shadow-2xl space-y-6">
+          <div className="w-20 h-20 bg-rose-500/10 text-rose-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl shadow-rose-950/20 border border-rose-500/20">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-white text-xl font-black uppercase tracking-tight">Access Prohibited</h2>
+            <p className="text-slate-400 text-xs font-mono uppercase tracking-widest mt-1">Status: Blocked / Suspended</p>
+          </div>
+          <p className="text-slate-300 font-bold text-sm">
+            Your account has been disabled by Super Owner
+          </p>
+          <div className="pt-4 border-t border-slate-900">
+            <button 
+              onClick={() => useAuthStore.getState().signOut()}
+              className="w-full py-4 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+            >
+              Sign Out / Re-authenticate
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Redirect SUPER_OWNER/OWNER to Owner Dashboard if no restaurant selected, unless they are already going there
+  if ((profile?.role === 'SUPER_OWNER' || profile?.role === 'OWNER') && !profile.restaurantId && !location.pathname.startsWith('/owner')) {
     return <Navigate to="/owner/restaurants" />;
   }
 
-  // Also redirect owner from /owner to /owner/restaurants
-  if (profile?.role === 'owner' && location.pathname === '/owner') {
+  // Also redirect SUPER_OWNER/OWNER from /owner to /owner/restaurants
+  if ((profile?.role === 'SUPER_OWNER' || profile?.role === 'OWNER') && location.pathname === '/owner') {
     return <Navigate to="/owner/restaurants" />;
   }
 
@@ -172,42 +237,46 @@ function App() {
       <Toaster position="top-center" richColors />
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/kds" element={<RoleGuard allowedRoles={['owner', 'admin', 'captain']}><KDS /></RoleGuard>} />
+        <Route path="/signup" element={<Navigate to="/login" replace />} />
+        <Route path="/register" element={<Navigate to="/login" replace />} />
+        <Route path="/kds" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN', 'CAPTAIN']}><KDS /></RoleGuard>} />
         <Route path="/menu/:restaurantId" element={<QRMenu />} />
         <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
           <Route index element={<Dashboard />} />
-          <Route path="menu" element={<RoleGuard allowedRoles={['owner', 'admin', 'captain']}><MenuScreen /></RoleGuard>} />
+          <Route path="menu" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN', 'CAPTAIN']}><MenuScreen /></RoleGuard>} />
           <Route path="orders" element={<ActiveOrders />} />
-          <Route path="history" element={<RoleGuard allowedRoles={['owner', 'admin']}><OrderHistory /></RoleGuard>} />
-          <Route path="analytics" element={<RoleGuard allowedRoles={['owner', 'admin']}><Analytics /></RoleGuard>} />
+          <Route path="history" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><OrderHistory /></RoleGuard>} />
+          <Route path="analytics" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><Analytics /></RoleGuard>} />
           <Route path="billing/:orderId" element={<Billing />} />
           <Route path="pending-bills" element={<PendingBills />} />
-          <Route path="bill-history" element={<RoleGuard allowedRoles={['owner', 'admin']}><BillHistory /></RoleGuard>} />
-          <Route path="cancellation-audit" element={<RoleGuard allowedRoles={['owner', 'admin']}><CancellationReports /></RoleGuard>} />
-          <Route path="expenses" element={<RoleGuard allowedRoles={['owner', 'admin']}><Expenses /></RoleGuard>} />
-          <Route path="day-end" element={<RoleGuard allowedRoles={['owner', 'admin']}><DayEnd /></RoleGuard>} />
-          <Route path="reservations" element={<RoleGuard allowedRoles={['owner', 'admin', 'captain']}><Reservations /></RoleGuard>} />
-          <Route path="hybrid-sync" element={<RoleGuard allowedRoles={['owner', 'admin']}><HybridSyncDashboard /></RoleGuard>} />
-          <Route path="enterprise" element={<RoleGuard allowedRoles={['owner', 'admin']}><EnterpriseManagement /></RoleGuard>} />
-          <Route path="inventory" element={<RoleGuard allowedRoles={['owner', 'admin']}><InventoryDashboard /></RoleGuard>} />
-          <Route path="branches" element={<RoleGuard allowedRoles={['owner', 'admin']}><BranchManagement /></RoleGuard>} />
-          <Route path="merchant-mobile" element={<RoleGuard allowedRoles={['owner', 'admin']}><MerchantMobileApp /></RoleGuard>} />
-          <Route path="ai-insights" element={<RoleGuard allowedRoles={['owner', 'admin']}><AIInsights /></RoleGuard>} />
-          <Route path="franchise" element={<RoleGuard allowedRoles={['owner']}><FranchiseDashboard /></RoleGuard>} />
-          <Route path="admin/*" element={<RoleGuard allowedRoles={['owner', 'admin']}><Admin /></RoleGuard>} />
+          <Route path="bill-history" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><BillHistory /></RoleGuard>} />
+          <Route path="cancellation-audit" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><CancellationReports /></RoleGuard>} />
+          <Route path="expenses" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><Expenses /></RoleGuard>} />
+          <Route path="day-end" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><DayEnd /></RoleGuard>} />
+          <Route path="reservations" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN', 'CAPTAIN']}><Reservations /></RoleGuard>} />
+          <Route path="hybrid-sync" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><HybridSyncDashboard /></RoleGuard>} />
+          <Route path="enterprise" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><EnterpriseManagement /></RoleGuard>} />
+          <Route path="inventory" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><InventoryDashboard /></RoleGuard>} />
+          <Route path="branches" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><BranchManagement /></RoleGuard>} />
+          <Route path="merchant-mobile" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><MerchantMobileApp /></RoleGuard>} />
+          <Route path="ai-insights" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><AIInsights /></RoleGuard>} />
+          <Route path="monitoring" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><SystemObservability /></RoleGuard>} />
+          <Route path="franchise" element={<RoleGuard allowedRoles={['SUPER_OWNER']}><FranchiseDashboard /></RoleGuard>} />
+          <Route path="owner-management" element={<RoleGuard allowedRoles={['SUPER_OWNER']}><OwnerManagement /></RoleGuard>} />
+          <Route path="admin/*" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><Admin /></RoleGuard>} />
           
           <Route path="owner">
             <Route index element={<Navigate to="/owner/restaurants" replace />} />
-            <Route path="restaurants" element={<RoleGuard allowedRoles={['owner']}><RestaurantManagement /></RoleGuard>} />
-            <Route path="admins" element={<RoleGuard allowedRoles={['owner']}><UserManagement roleFilter="admin" /></RoleGuard>} />
-            <Route path="captains" element={<RoleGuard allowedRoles={['owner']}><UserManagement roleFilter="captain" /></RoleGuard>} />
+            <Route path="restaurants" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER']}><RestaurantManagement /></RoleGuard>} />
+            <Route path="admins" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER']}><UserManagement roleFilter="admin" /></RoleGuard>} />
+            <Route path="captains" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER']}><UserManagement roleFilter="captain" /></RoleGuard>} />
           </Route>
 
-          <Route path="users" element={<RoleGuard allowedRoles={['owner']}><UserManagement /></RoleGuard>} />
-          <Route path="restaurants" element={<RoleGuard allowedRoles={['owner']}><RestaurantManagement /></RoleGuard>} />
-          <Route path="settings" element={<RoleGuard allowedRoles={['owner', 'admin']}><Settings /></RoleGuard>} />
-          <Route path="printer-settings" element={<RoleGuard allowedRoles={['owner', 'admin']}><PrinterSettings /></RoleGuard>} />
-          <Route path="billing-config" element={<RoleGuard allowedRoles={['owner', 'admin']}><BillingConfiguration /></RoleGuard>} />
+          <Route path="users" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER']}><UserManagement /></RoleGuard>} />
+          <Route path="restaurants" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER']}><RestaurantManagement /></RoleGuard>} />
+          <Route path="settings" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><Settings /></RoleGuard>} />
+          <Route path="printer-settings" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><PrinterSettings /></RoleGuard>} />
+          <Route path="billing-config" element={<RoleGuard allowedRoles={['SUPER_OWNER', 'OWNER', 'ADMIN']}><BillingConfiguration /></RoleGuard>} />
         </Route>
       </Routes>
     </Router>

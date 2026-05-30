@@ -122,7 +122,7 @@ export const printReceipt = async (data: PrintData) => {
             </tr>
           </thead>
           <tbody>
-            ${data.items.map(item => `
+            ${(data.items || []).map(item => `
               <tr>
                 <td>
                   <div style="font-weight: bold;">${item.itemName}</div>

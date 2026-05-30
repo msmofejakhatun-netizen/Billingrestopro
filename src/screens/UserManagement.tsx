@@ -34,7 +34,7 @@ const UserManagementScreen = ({ roleFilter }: UserManagementProps) => {
   useEffect(() => {
     if (!profile) return;
     // Owners see across everything, Admins only see their restaurant
-    const sub = subscribe(profile.role === 'owner' ? undefined : profile.restaurantId);
+    const sub = subscribe((profile.role === 'owner' || profile.role === 'SUPER_OWNER' || profile.role === 'super_owner') ? undefined : profile.restaurantId);
     return () => sub();
   }, [profile]);
 
@@ -51,8 +51,8 @@ const UserManagementScreen = ({ roleFilter }: UserManagementProps) => {
     try {
       await createStaff({
         ...formData,
-        role: formData.role || (profile?.role === 'owner' ? 'admin' : 'captain'),
-        restaurantId: profile?.role === 'owner' ? formData.restaurantId : profile?.restaurantId
+        role: formData.role || ((profile?.role === 'owner' || profile?.role === 'SUPER_OWNER' || profile?.role === 'super_owner') ? 'admin' : 'captain'),
+        restaurantId: (profile?.role === 'owner' || profile?.role === 'SUPER_OWNER' || profile?.role === 'super_owner') ? formData.restaurantId : profile?.restaurantId
       });
       setIsAdding(false);
       resetForm();
@@ -306,7 +306,7 @@ const UserManagementScreen = ({ roleFilter }: UserManagementProps) => {
                       </>
                     )}
 
-                    {profile?.role === 'owner' && (
+                    {(profile?.role === 'owner' || profile?.role === 'SUPER_OWNER' || profile?.role === 'super_owner') && (
                        <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-4">
                             <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-2">Authority Role</label>

@@ -8,7 +8,7 @@ import { useAuthStore } from './useAuthStore';
 export interface RestaurantTable {
   id: string;
   tableNumber: string;
-  status: 'available' | 'occupied' | 'running' | 'billed';
+  status: 'available' | 'occupied' | 'running' | 'billed' | 'BILLING';
   currentOrderId?: string;
   restaurantId: string;
   section: string;
@@ -64,9 +64,7 @@ export const useTableStore = create<TableState>((set, get) => ({
   },
   addTable: async (section = 'Hall') => {
     const { tables } = get();
-    const profile = useAuthStore.getState().profile;
-    if (!profile?.restaurantId) return;
-
+    
     // Filter tables in the same section to calculate next number
     const sectionTables = tables.filter(t => t.section === section);
     
@@ -80,6 +78,9 @@ export const useTableStore = create<TableState>((set, get) => ({
     const prefix = section.substring(0, 2).toUpperCase();
     const nextTableNum = `${prefix}${lastTableNum + 1}`;
     
+    const profile = useAuthStore.getState().profile;
+    if (!profile?.restaurantId) return;
+
     await addDoc(collection(db, 'tables'), {
       tableNumber: nextTableNum,
       status: 'available',

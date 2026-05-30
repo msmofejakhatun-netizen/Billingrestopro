@@ -24,7 +24,7 @@ const MerchantMobileApp = () => {
     const ordersQ = query(
       collection(db, 'orders'),
       where('restaurantId', '==', currentRestaurant.id),
-      where('orderStatus', '==', 'running'),
+      where('orderStatus', 'in', ['running', 'RUNNING']),
       limit(10)
     );
 

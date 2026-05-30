@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useOrderStore, Order } from '../stores/useOrderStore';
-import { useAuthStore } from '../stores/useAuthStore';
+import { useAuthStore, hasPermission } from '../stores/useAuthStore';
 import { useTableStore } from '../stores/useTableStore';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -30,6 +30,7 @@ const Billing = () => {
   const [processing, setProcessing] = useState(false);
   const [payments, setPayments] = useState<{method: 'CASH' | 'CARD' | 'UPI', amount: number}[]>([]);
   const [showSettleModal, setShowSettleModal] = useState(false);
+  const [showSettlement, setShowSettlement] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -45,15 +46,22 @@ const Billing = () => {
       if (snap.exists()) {
         const orderData = { id: snap.id, ...snap.data() } as Order;
         setOrder(orderData);
-        if (orderData.orderStatus === 'billed' || orderData.orderStatus === 'completed') {
+        
+        const statusUpper = (orderData.orderStatus || '').toUpperCase();
+        const isBilledOrCompleted = [
+          'BILLED', 'BILL_GENERATED', 'GENERATED', 'PENDING_PAYMENT', 'COMPLETED'
+        ].includes(statusUpper);
+
+        if (isBilledOrCompleted) {
           setDiscountValue(orderData.discountAmount || 0);
           setDiscountType('FIXED');
           setServiceCharge(orderData.serviceChargeAmount || 0);
           
-          if (orderData.orderStatus === 'completed' && orderData.payments) {
+          if (statusUpper === 'COMPLETED' && orderData.payments) {
             setPayments(orderData.payments as any);
           } else {
-            setPayments([{ method: 'CASH', amount: Math.round(orderData.finalAmount || 0) }]);
+            const remaining = orderData.balanceAmount !== undefined ? orderData.balanceAmount : Math.round(orderData.finalAmount || 0);
+            setPayments([{ method: 'CASH', amount: remaining }]);
           }
         }
       }
@@ -110,12 +118,44 @@ const Billing = () => {
   const grandTotal = (config?.isGstInclusive ? taxableAmount : (taxableAmount + gst)) + serviceCharge;
   const roundedTotal = Math.round(grandTotal);
 
-  const canBill = profile?.role === 'owner' || profile?.role === 'admin' || profile?.permissions?.canGenerateBill;
-  const isSufficientPaid = payments.reduce((sum, p) => sum + p.amount, 0) >= roundedTotal;
+  const canBill = hasPermission(profile, 'generateBill');
+  const canSettle = hasPermission(profile, 'settlePayment');
+  const totalEntered = payments.reduce((sum, p) => sum + p.amount, 0);
+  const remainingExpected = order.balanceAmount !== undefined ? order.balanceAmount : roundedTotal;
+  const isSufficientPaid = totalEntered > 0;
+  const isFullPayment = (order.paidAmount || 0) + totalEntered >= roundedTotal;
 
   const handleGenerateBill = async () => {
-    if (!canBill) return toast.error("Not authorized to generate bills");
-    if (order.orderStatus !== 'running') return toast.error("Bill can only be generated for running orders");
+    console.log("DEBUG: handleGenerateBill clicked.", {
+      orderId: order.id,
+      currentOrderStatus: order.orderStatus,
+      paymentStatus: order.paymentStatus,
+      billingStatus: order.billingStatus,
+      tableNumber: order.tableNumber
+    });
+
+    if (!canBill) {
+      console.warn("DEBUG: Billing blocked. User not authorized to generate bills.");
+      return toast.error("Not authorized to generate bills");
+    }
+
+    const statusUpper = (order.orderStatus || '').toUpperCase();
+    const isAlreadyGenerated = ['BILLED', 'BILL_GENERATED', 'GENERATED', 'PENDING_PAYMENT'].includes(statusUpper);
+
+    if (isAlreadyGenerated) {
+      console.log("DEBUG: Bill is already generated. Directly opening settlement.");
+      setShowSettlement(true);
+      return;
+    }
+
+    const allowedStatuses = ['RUNNING', 'KOT_SERVED', 'READY'];
+    if (!allowedStatuses.includes(statusUpper)) {
+      console.warn("DEBUG: Billing blocked. Invalid order status.", {
+        orderStatus: order.orderStatus,
+        allowedStatuses
+      });
+      return toast.error(`Bill can only be generated for RUNNING, KOT_SERVED, or READY orders (current status is "${order.orderStatus || 'unknown'}")`);
+    }
     
     setProcessing(true);
     try {
@@ -126,14 +166,27 @@ const Billing = () => {
         gstAmount: gst,
         finalAmount: roundedTotal
       });
+
+      console.log("DEBUG: generateBill state action completed successfully");
       const snap = await getDoc(doc(db, 'orders', order.id!));
       if (snap.exists()) {
         const updatedOrder = { id: snap.id, ...snap.data() } as Order;
+        console.log("DEBUG: Loaded freshly updated order from firestore.", {
+          orderId: updatedOrder.id,
+          orderStatus: updatedOrder.orderStatus,
+          paymentStatus: updatedOrder.paymentStatus,
+          billingStatus: updatedOrder.billingStatus
+        });
         setOrder(updatedOrder);
         setPayments([{ method: 'CASH', amount: Math.round(updatedOrder.finalAmount || 0) }]);
         toast.success("Bill generated & pending settlement");
+        
+        console.log("DEBUG: Navigating instantly to Pending Bills screen");
+        navigate('/pending-bills');
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error("DEBUG: Billing flow error encountered:", err);
+      toast.error(`Billing flow error: ${err.message || 'unknown error'}`);
     } finally {
       setProcessing(false);
     }
@@ -144,10 +197,10 @@ const Billing = () => {
     setProcessing(true);
     try {
       const { settlePayment } = useOrderStore.getState();
-      const table = tables.find(t => t.tableNumber === order.tableNumber);
-      if (!table) throw new Error("Table not found");
+      const tableId = order.tableId || tables.find(t => t.tableNumber === order.tableNumber)?.id;
+      if (!tableId) throw new Error("Table not found");
 
-      await settlePayment(order.id!, table.id, payments);
+      await settlePayment(order.id!, tableId, payments);
       
       if (autoPrintBill) {
         printerService.connect().then(() => {
@@ -228,7 +281,7 @@ const Billing = () => {
         </div>
 
         <div className="bg-slate-50 rounded-3xl p-8 space-y-6 border border-slate-100">
-           {order.orderStatus === 'running' && (
+           {['RUNNING', 'KOT_SERVED', 'READY'].includes((order.orderStatus || '').toUpperCase()) && (
             <div className="space-y-4 pb-4 border-b border-slate-200">
               <div className="flex justify-between items-end">
                 <p className="text-[10px] uppercase font-black text-slate-400 tracking-[0.2em]">Apply Discount</p>
@@ -297,7 +350,7 @@ const Billing = () => {
            </div>
         </div>
 
-        {order.orderStatus === 'completed' ? (
+        {((order.orderStatus === 'completed' || order.orderStatus === 'COMPLETED')) ? (
           <div className="space-y-6 pt-6 border-t border-slate-100 italic">
             <div className="flex items-center justify-between">
                <h4 className="text-sm font-black uppercase tracking-widest text-emerald-600 flex items-center gap-2">
@@ -348,74 +401,94 @@ const Billing = () => {
               Reprint Copy
             </button>
           </div>
-        ) : order.orderStatus === 'billed' ? (
-          <div className="space-y-6 pt-6 border-t border-slate-100">
-            <div className="flex items-center justify-between">
-               <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Payment Breakdown</h4>
-               <button onClick={handleAddPayment} className="text-indigo-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-1 hover:underline">
-                  <Plus size={14} /> Add Method
-               </button>
+        ) : ['BILLED', 'BILL_GENERATED', 'GENERATED', 'PENDING_PAYMENT'].includes((order.orderStatus || '').toUpperCase()) ? (
+          !canSettle ? (
+            <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-[2rem] space-y-4 pt-6 mt-6">
+              <div className="w-12 h-12 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto">
+                <Loader2 size={24} className="animate-spin text-amber-500" />
+              </div>
+              <div>
+                <h4 className="font-black text-sm text-slate-800 uppercase tracking-tight">Waiting for cashier</h4>
+                <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest mt-1">Payment settlement is disabled for your account</p>
+              </div>
             </div>
+          ) : showSettlement ? (
+            <div className="space-y-6 pt-6 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                 <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Payment Breakdown</h4>
+                 <button onClick={handleAddPayment} className="text-indigo-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-1 hover:underline">
+                    <Plus size={14} /> Add Method
+                 </button>
+              </div>
 
-            <div className="space-y-3">
-              {payments.map((p, idx) => (
-                <div key={idx} className="flex gap-3 items-center bg-slate-50 p-3 rounded-2xl border border-slate-100 animate-in fade-in slide-in-from-right-4">
-                  <div className="flex bg-white rounded-xl p-0.5 shadow-sm border border-slate-100 flex-shrink-0">
-                    {[
-                      { id: 'CASH', icon: Banknote, color: 'text-emerald-500' },
-                      { id: 'CARD', icon: CreditCard, color: 'text-indigo-500' },
-                      { id: 'UPI', icon: Smartphone, color: 'text-blue-500' }
-                    ].map((m) => {
-                      const Icon = m.icon;
-                      const isActive = p.method === m.id;
-                      return (
-                        <button
-                          key={m.id}
-                          onClick={() => updatePayment(idx, 'method', m.id)}
-                          className={`px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 ${isActive ? 'bg-slate-900 text-white' : 'text-slate-400 hover:text-slate-600'}`}
-                          title={m.id}
-                        >
-                          <Icon size={14} className={isActive ? 'text-white' : m.color} />
-                          <span className="text-[9px] font-black uppercase tracking-widest hidden sm:inline">{m.id}</span>
-                        </button>
-                      );
-                    })}
+              <div className="space-y-3">
+                {payments.map((p, idx) => (
+                  <div key={idx} className="flex gap-3 items-center bg-slate-50 p-3 rounded-2xl border border-slate-100 animate-in fade-in slide-in-from-right-4">
+                    <div className="flex bg-white rounded-xl p-0.5 shadow-sm border border-slate-100 flex-shrink-0">
+                      {[
+                        { id: 'CASH', icon: Banknote, color: 'text-emerald-500' },
+                        { id: 'CARD', icon: CreditCard, color: 'text-indigo-500' },
+                        { id: 'UPI', icon: Smartphone, color: 'text-blue-500' }
+                      ].map((m) => {
+                        const Icon = m.icon;
+                        const isActive = p.method === m.id;
+                        return (
+                          <button
+                             key={m.id}
+                             onClick={() => updatePayment(idx, 'method', m.id)}
+                             className={`px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 ${isActive ? 'bg-slate-900 text-white' : 'text-slate-400 hover:text-slate-600'}`}
+                             title={m.id}
+                          >
+                             <Icon size={14} className={isActive ? 'text-white' : m.color} />
+                             <span className="text-[9px] font-black uppercase tracking-widest hidden sm:inline">{m.id}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex-1 relative">
+                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 font-bold text-xs">₹</span>
+                       <input 
+                         type="number"
+                         value={p.amount || ''}
+                         onChange={(e) => updatePayment(idx, 'amount', Number(e.target.value))}
+                         placeholder="Amount"
+                         className="w-full bg-white border-0 pl-7 pr-3 py-2 rounded-xl text-xs font-black outline-none shadow-sm"
+                       />
+                    </div>
+                    {payments.length > 1 && (
+                      <button onClick={() => removePayment(idx)} className="p-2 text-slate-300 hover:text-rose-500 transition-colors">
+                         <Trash2 size={16} />
+                      </button>
+                    )}
                   </div>
-                  <div className="flex-1 relative">
-                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 font-bold text-xs">₹</span>
-                     <input 
-                       type="number"
-                       value={p.amount || ''}
-                       onChange={(e) => updatePayment(idx, 'amount', Number(e.target.value))}
-                       placeholder="Amount"
-                       className="w-full bg-white border-0 pl-7 pr-3 py-2 rounded-xl text-xs font-black outline-none shadow-sm"
-                     />
-                  </div>
-                  {payments.length > 1 && (
-                    <button onClick={() => removePayment(idx)} className="p-2 text-slate-300 hover:text-rose-500 transition-colors">
-                       <Trash2 size={16} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            <div className={`p-4 rounded-2xl flex justify-between items-center ${isSufficientPaid ? 'bg-emerald-50 border border-emerald-100' : 'bg-amber-50 border border-amber-100'}`}>
-               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Collected Total</span>
-               <span className={`text-lg font-black italic ${isSufficientPaid ? 'text-emerald-600' : 'text-amber-600'}`}>
-                 ₹{payments.reduce((sum, p) => sum + p.amount, 0)}
-               </span>
-            </div>
+              <div className={`p-4 rounded-2xl flex justify-between items-center ${isSufficientPaid ? 'bg-emerald-50 border border-emerald-100' : 'bg-amber-50 border border-amber-100'}`}>
+                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Collected Total</span>
+                 <span className={`text-lg font-black italic ${isSufficientPaid ? 'text-emerald-600' : 'text-amber-600'}`}>
+                   ₹{payments.reduce((sum, p) => sum + p.amount, 0)}
+                 </span>
+              </div>
 
+              <button 
+                onClick={handleSettle}
+                disabled={processing || !isSufficientPaid}
+                className="w-full bg-slate-900 text-white font-black py-6 rounded-2xl flex items-center justify-center gap-3 shadow-2xl hover:bg-black active:scale-[0.98] transition-all uppercase tracking-widest text-sm disabled:opacity-30"
+              >
+                {processing ? <Loader2 size={20} className="animate-spin" /> : <CheckCircle size={20} />}
+                {processing ? 'Settling...' : 'Settle Payment'}
+              </button>
+            </div>
+          ) : (
             <button 
-              onClick={handleSettle}
-              disabled={processing || !isSufficientPaid}
-              className="w-full bg-slate-900 text-white font-black py-6 rounded-2xl flex items-center justify-center gap-3 shadow-2xl hover:bg-black active:scale-[0.98] transition-all uppercase tracking-widest text-sm disabled:opacity-30"
+              onClick={() => setShowSettlement(true)}
+              className="w-full bg-indigo-600 text-white font-black py-6 rounded-2xl flex items-center justify-center gap-3 shadow-2xl hover:bg-indigo-700 active:scale-[0.98] transition-all uppercase tracking-widest text-sm"
             >
-              {processing ? <Loader2 size={20} className="animate-spin" /> : <CheckCircle size={20} />}
-              {processing ? 'Settling...' : 'Complete Settlement'}
+              <CreditCard size={20} />
+              Proceed To Settlement
             </button>
-          </div>
+          )
         ) : (
           <button 
             onClick={handleGenerateBill}
@@ -423,7 +496,7 @@ const Billing = () => {
             className="w-full bg-indigo-600 text-white font-black py-6 rounded-2xl flex items-center justify-center gap-3 shadow-2xl hover:bg-indigo-700 active:scale-[0.98] transition-all uppercase tracking-widest text-sm disabled:opacity-50"
           >
             {processing ? <Loader2 size={20} className="animate-spin" /> : <Receipt size={20} />}
-            {processing ? 'Generating...' : 'Finalize & Move to Pending'}
+            {processing ? 'Generating...' : 'Finalize & Move To Pending'}
           </button>
         )}
       </div>

@@ -4,13 +4,31 @@ import { useTableStore } from '../stores/useTableStore';
 import { useOrderStore } from '../stores/useOrderStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Minus, Search, ShoppingCart, ArrowLeft, X, UtensilsCrossed, LayoutGrid, CheckCircle } from 'lucide-react';
+import { Plus, Minus, Search, ShoppingCart, ArrowLeft, X, UtensilsCrossed, LayoutGrid, CheckCircle, MessageSquare, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { printReceipt } from '../utils/printReceipt';
 import { auth } from '../lib/firebase';
 
 import { usePrinterStore } from '../stores/usePrinterStore';
+
+const getOrderStartDate = (timestamp: any): Date | null => {
+  if (!timestamp) return null;
+  if (typeof timestamp.toDate === 'function') {
+    return timestamp.toDate();
+  }
+  if (typeof timestamp.seconds === 'number') {
+    return new Date(timestamp.seconds * 1000);
+  }
+  if (typeof timestamp._seconds === 'number') {
+    return new Date(timestamp._seconds * 1000);
+  }
+  const parsed = new Date(timestamp);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+  return null;
+};
 
 const MenuScreen = () => {
   const { categories, items, loading: menuLoading, subscribe: subscribeMenu } = useMenuStore();
@@ -31,6 +49,48 @@ const MenuScreen = () => {
   const [isTableModalOpen, setIsTableModalOpen] = useState(false);
   const [orderNotes, setOrderNotes] = useState('');
   const navigate = useNavigate();
+
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    if (!isSummaryOpen || !currentOrder?.timestamp) return;
+
+    setNow(new Date());
+
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isSummaryOpen, currentOrder?.timestamp]);
+
+  const getActiveDuration = () => {
+    if (!currentOrder?.timestamp) return null;
+    const startDate = getOrderStartDate(currentOrder.timestamp);
+    if (!startDate) return null;
+
+    const diffMs = now.getTime() - startDate.getTime();
+    if (diffMs < 0) return '0s';
+
+    const diffSecs = Math.floor(diffMs / 1000);
+    const hrs = Math.floor(diffSecs / 3600);
+    const mins = Math.floor((diffSecs % 3600) / 60);
+    const secs = diffSecs % 60;
+
+    let parts = [];
+    if (hrs > 0) parts.push(`${hrs}h`);
+    if (mins > 0 || hrs > 0) parts.push(`${mins}m`);
+    parts.push(`${secs}s`);
+
+    return parts.join(' ');
+  };
+
+  const getOrderStartTimeFormatted = () => {
+    if (!currentOrder?.timestamp) return null;
+    const startDate = getOrderStartDate(currentOrder.timestamp);
+    if (!startDate) return null;
+    return startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
 
   useEffect(() => {
     if (!profile) return;
@@ -340,7 +400,18 @@ const MenuScreen = () => {
                 </button>
                 <div className="text-center">
                    <h3 className="font-black text-slate-900 uppercase italic tracking-tighter">Order Summary</h3>
-                   <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">Table {currentTable?.number || '??'}</p>
+                   <div className="flex items-center justify-center gap-2 mt-1">
+                      <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">Table {currentTable?.number || '??'}</p>
+                      {currentOrder?.timestamp && (
+                        <>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest font-mono flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping mr-0.5" />
+                            {getActiveDuration()}
+                          </span>
+                        </>
+                      )}
+                   </div>
                 </div>
                 <button onClick={() => setIsSummaryOpen(false)} className="p-2 text-slate-300">
                    <X size={24} />
@@ -349,6 +420,42 @@ const MenuScreen = () => {
 
              {/* Summary Content */}
              <div className="flex-1 overflow-y-auto p-6 space-y-8 max-w-2xl mx-auto w-full">
+                {/* Active Order Timer */}
+                {currentOrder?.timestamp && (() => {
+                  const duration = getActiveDuration();
+                  const startTime = getOrderStartTimeFormatted();
+                  if (!duration) return null;
+                  return (
+                    <motion.div 
+                      key="active-order-timer"
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-amber-50 border border-amber-200/60 rounded-[2rem] p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-amber-500/10 text-amber-600 rounded-2xl flex items-center justify-center relative">
+                          <span className="absolute inset-0 rounded-2xl bg-amber-500/10 animate-ping" />
+                          <Clock size={20} className="relative z-10" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-500">Order Progress</p>
+                          <h4 className="text-base font-black text-slate-800 uppercase tracking-tight italic">Active Session</h4>
+                        </div>
+                      </div>
+                      <div className="flex flex-col sm:items-end text-center sm:text-right">
+                        <span className="text-2xl font-black text-amber-700 italic font-mono tracking-tight animate-pulse">
+                          {duration}
+                        </span>
+                        {startTime && (
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            Started at {startTime}
+                          </span>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })()}
+
                 {/* Cart Items */}
                 <div className="space-y-4">
                    <div className="flex items-center justify-between px-1">
@@ -382,13 +489,27 @@ const MenuScreen = () => {
                         cart
                           .filter(item => item.itemName.toLowerCase().includes(cartSearchQuery.toLowerCase()))
                           .map((item, idx) => (
-                            <div key={`${item.itemId}-${item.notes}`} className={`p-6 flex flex-col gap-3 ${idx !== 0 ? 'border-t border-slate-50' : ''}`}>
-                              <div className="flex items-center justify-between">
-                                <div className="flex-1">
-                                  <h4 className="font-black text-slate-800 uppercase tracking-tight italic">{item.itemName}</h4>
+                            <div 
+                              key={`${item.itemId}-${item.notes}`} 
+                              className={`p-6 flex flex-col gap-4 group/cartitem transition-all duration-300 hover:bg-indigo-50/15 hover:shadow-[0_8px_24px_-6px_rgba(79,70,229,0.06)] hover:translate-x-1 border-l-4 border-l-transparent hover:border-l-indigo-500 rounded-r-2xl md:rounded-r-[1.5rem] ${idx !== 0 ? 'border-t border-slate-100/50' : ''}`}
+                            >
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                                    <h4 className="font-black text-slate-800 uppercase tracking-tight italic text-base truncate">
+                                      {item.itemName}
+                                    </h4>
+                                    {item.notes && (
+                                      <span className="inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-wider text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded-full border border-amber-200/50 animate-in fade-in duration-300">
+                                        <MessageSquare size={10} className="stroke-[3]" />
+                                        Customized
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="text-sm font-black text-indigo-600 italic">₹{item.price}</p>
                                 </div>
-                                <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+                                
+                                <div className="flex items-center gap-4 bg-slate-50 group-hover/cartitem:bg-white p-1.5 rounded-2xl border border-slate-100 group-hover/cartitem:border-slate-200/80 transition-all duration-300 shadow-sm">
                                   <button 
                                     onClick={() => {
                                       if (item.quantity === 1) {
@@ -399,24 +520,34 @@ const MenuScreen = () => {
                                         updateCartQuantity(item.itemId, -1, item.notes);
                                       }
                                     }}
-                                    className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-rose-500"
+                                    className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
                                   >
                                     <Minus size={16} strokeWidth={2.5} />
                                   </button>
-                                  <span className="font-black w-4 text-center text-sm">{item.quantity}</span>
-                                  <button onClick={() => updateCartQuantity(item.itemId, 1, item.notes)} className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-indigo-600">
+                                  <span className="font-black w-4 text-center text-sm text-slate-800">{item.quantity}</span>
+                                  <button 
+                                    onClick={() => updateCartQuantity(item.itemId, 1, item.notes)} 
+                                    className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                                  >
                                     <Plus size={16} strokeWidth={2.5} />
                                   </button>
                                 </div>
                               </div>
                               
                               <div className="relative">
+                                <span className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors duration-300 ${item.notes ? 'text-amber-500' : 'text-slate-400'}`}>
+                                  <MessageSquare size={13} />
+                                </span>
                                 <input
                                   type="text"
                                   value={item.notes || ''}
                                   onChange={(e) => updateItemNotes(item.itemId, item.notes || '', e.target.value)}
-                                  placeholder="Add item instructions (e.g. extra spicy)..."
-                                  className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-[11px] font-medium placeholder:text-slate-300 focus:ring-2 focus:ring-indigo-100 outline-none transition-all italic"
+                                  placeholder="Add kitchen feedback (e.g., no onion, double cheese)..."
+                                  className={`w-full bg-slate-50/70 border rounded-2xl pl-10 pr-4 py-2.5 text-[11px] font-bold text-slate-700 placeholder:text-slate-300 placeholder:font-medium placeholder:text-[11px] focus:bg-white focus:ring-4 outline-none transition-all duration-300 ${
+                                    item.notes 
+                                      ? 'border-amber-200 bg-amber-50/10 focus:ring-amber-100 text-amber-900 font-extrabold' 
+                                      : 'border-slate-100 focus:ring-indigo-100 focus:border-indigo-500'
+                                  }`}
                                 />
                               </div>
                             </div>

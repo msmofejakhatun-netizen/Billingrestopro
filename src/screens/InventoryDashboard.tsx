@@ -150,36 +150,61 @@ const InventoryDashboard = () => {
                   </tr>
                </thead>
                <tbody className="divide-y divide-slate-50">
-                  {stock.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
-                       <td className="px-10 py-6">
-                          <p className="text-sm font-black text-slate-800 uppercase tracking-tight">{item.name}</p>
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.category || 'General'}</p>
-                       </td>
-                       <td className="px-10 py-6">
-                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded-full">{item.unit}</span>
-                       </td>
-                       <td className="px-10 py-6 text-center font-mono font-black text-slate-900">
-                          {item.currentStock.toLocaleString()}
-                       </td>
-                       <td className="px-10 py-6 text-center font-mono font-black text-emerald-600">
-                          ₹{item.costPrice.toLocaleString()}
-                       </td>
-                       <td className="px-10 py-6">
-                          {item.currentStock <= item.minStockLevel ? (
-                            <span className="px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-rose-50 text-rose-600 border border-rose-100">Low Stock</span>
-                          ) : (
-                            <span className="px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-600 border border-emerald-100">Sufficient</span>
-                          )}
-                       </td>
-                       <td className="px-10 py-6 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                             <button className="p-2.5 bg-slate-50 text-slate-600 rounded-xl hover:bg-slate-100"><History size={16}/></button>
-                             <button className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100"><ArrowUpRight size={16}/></button>
-                          </div>
-                       </td>
-                    </tr>
-                  ))}
+                  {stock.map((item) => {
+                    const isLowStock = item.currentStock <= item.minStockLevel;
+                    return (
+                      <tr 
+                        key={item.id} 
+                        className={`transition-all duration-200 ${
+                          isLowStock 
+                            ? 'bg-rose-50/10 hover:bg-rose-50/25 border-l-4 border-l-rose-500' 
+                            : 'hover:bg-slate-50/30 border-l-4 border-l-transparent'
+                        }`}
+                      >
+                         <td className="px-10 py-6">
+                            <div className="flex items-center gap-2">
+                               <p className="text-sm font-black text-slate-800 uppercase tracking-tight">{item.name}</p>
+                               {isLowStock && (
+                                 <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-rose-500 text-white animate-pulse">
+                                    <AlertCircle size={10} /> REORDER
+                                 </span>
+                               )}
+                            </div>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.category || 'General'}</p>
+                         </td>
+                         <td className="px-10 py-6">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded-full">{item.unit}</span>
+                         </td>
+                         <td className="px-10 py-6 text-center">
+                            <div className="flex flex-col items-center justify-center">
+                               <span className={`font-mono text-sm font-black flex items-center gap-1 ${isLowStock ? 'text-rose-600 animate-pulse' : 'text-slate-900'}`}>
+                                  {isLowStock && <AlertCircle size={14} className="text-rose-600 shrink-0" />}
+                                  {item.currentStock.toLocaleString()}
+                                </span>
+                               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">Min: {item.minStockLevel}</span>
+                            </div>
+                         </td>
+                         <td className="px-10 py-6 text-center font-mono font-black text-emerald-600">
+                            ₹{item.costPrice.toLocaleString()}
+                         </td>
+                         <td className="px-10 py-6">
+                            {isLowStock ? (
+                              <span className="inline-flex items-center gap-1 px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-rose-100 text-rose-700 border border-rose-200 shadow-sm">
+                                 <AlertCircle size={12} className="text-rose-600" /> Low Stock
+                              </span>
+                            ) : (
+                              <span className="px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-600 border border-emerald-100">Sufficient</span>
+                            )}
+                         </td>
+                         <td className="px-10 py-6 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                               <button className="p-2.5 bg-slate-50 text-slate-600 rounded-xl hover:bg-slate-100"><History size={16}/></button>
+                               <button className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100"><ArrowUpRight size={16}/></button>
+                            </div>
+                         </td>
+                      </tr>
+                    );
+                  })}
                </tbody>
             </table>
          </div>

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { printerService, PrinterDevice } from '../services/printerService';
 import { usbPrinterService, ConnectionStatus } from '../services/usbPrinterService';
 import { toast } from 'sonner';
@@ -243,6 +243,7 @@ export const usePrinterStore = create<PrinterState>()(
     }),
     {
       name: 'printer-storage',
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         defaultPrinter: state.defaultPrinter,
         paperWidth: state.paperWidth,

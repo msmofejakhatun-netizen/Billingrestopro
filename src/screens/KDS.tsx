@@ -25,7 +25,7 @@ const KDS = () => {
     const q = query(
       collection(db, 'orders'),
       where('restaurantId', '==', profile.restaurantId),
-      where('orderStatus', '==', 'running'),
+      where('orderStatus', 'in', ['running', 'RUNNING']),
       orderBy('timestamp', 'asc')
     );
 
@@ -83,6 +83,26 @@ const KDS = () => {
     toast.success(`Table ${order.tableNumber} is READY`);
   };
 
+  const markKOTReady = async (orderId: string, itemIdxs: number[]) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    const newItems = [...order.items];
+    itemIdxs.forEach(idx => {
+      newItems[idx] = { ...newItems[idx], status: 'ready' };
+    });
+
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        items: newItems,
+        kdsStatus: newItems.every(i => i.status === 'ready') ? 'ready' : 'preparing'
+      });
+      toast.success("KOT Ticket marked ready!");
+    } catch (e) {
+      toast.error("Failed to update kitchen status");
+    }
+  };
+
   if (loading) return <div className="bg-slate-900 min-h-screen flex items-center justify-center text-indigo-400 font-black uppercase tracking-[0.2em] animate-pulse">Initializing Kitchen Hub...</div>;
 
   return (
@@ -125,6 +145,32 @@ const KDS = () => {
             const minutesElapsed = order.timestamp ? Math.floor((Date.now() - order.timestamp.toMillis()) / 60000) : 0;
             const isLate = minutesElapsed > 15;
 
+            // Group order items by kotId
+            const kotGroups: Record<string, typeof order.items> = {};
+            const itemIndices: Record<string, number[]> = {};
+
+            order.items.forEach((item: any, idx: number) => {
+              const kotId = item.kotId || 'Direct-Order';
+              if (!kotGroups[kotId]) {
+                kotGroups[kotId] = [];
+                itemIndices[kotId] = [];
+              }
+              kotGroups[kotId].push(item);
+              itemIndices[kotId].push(idx);
+            });
+
+            // Sort KOT IDs dynamically using original sequence first or alphabetical compare
+            const sortedKotIds = Object.keys(kotGroups).sort((a, b) => {
+              if (a === 'Direct-Order') return 1;
+              if (b === 'Direct-Order') return -1;
+              const aIdx = order.kotHistory?.findIndex((k: any) => k.id === a) ?? -1;
+              const bIdx = order.kotHistory?.findIndex((k: any) => k.id === b) ?? -1;
+              if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+              if (aIdx !== -1) return -1;
+              if (bIdx !== -1) return 1;
+              return a.localeCompare(b);
+            });
+
             return (
               <motion.div 
                 key={order.id}
@@ -149,31 +195,97 @@ const KDS = () => {
                    </div>
                 </div>
 
-                {/* Items List */}
-                <div className="p-8 flex-1 space-y-5">
-                   {order.items.map((item: any, idx: number) => (
-                     <div key={idx} className="flex items-start gap-4 group">
-                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black shrink-0 transition-colors ${item.status === 'ready' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
-                           {item.quantity}
+                {/* Items List Grouped by KOT */}
+                <div className="p-8 flex-1 space-y-6">
+                  {sortedKotIds.map((kotId) => {
+                    const groupItems = kotGroups[kotId];
+                    const originalIndices = itemIndices[kotId];
+                    const isGroupCompleted = groupItems.every((item: any) => item.status === 'ready');
+
+                    const kotHistoryEntry = order.kotHistory?.find((kh: any) => kh.id === kotId);
+                    let kTimeStr = '';
+                    if (kotHistoryEntry?.timestamp) {
+                      try {
+                        const dateObj = typeof kotHistoryEntry.timestamp.toDate === 'function'
+                          ? kotHistoryEntry.timestamp.toDate()
+                          : new Date(kotHistoryEntry.timestamp);
+                        kTimeStr = format(dateObj, 'hh:mm a');
+                      } catch (e) {
+                        console.warn(e);
+                      }
+                    }
+
+                    return (
+                      <div 
+                        key={kotId}
+                        className={`p-4 rounded-3xl border transition-all ${
+                          isGroupCompleted 
+                            ? 'bg-slate-950/10 border-slate-800/30 opacity-55' 
+                            : 'bg-slate-950/40 border-slate-800/80 shadow-md'
+                        }`}
+                      >
+                        {/* KOT Header Block */}
+                        <div className="flex items-center justify-between border-b border-slate-800/50 pb-2 mb-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full ${isGroupCompleted ? 'bg-slate-500' : 'bg-indigo-500 animate-pulse'}`} />
+                            <p className="font-mono text-[9px] font-black uppercase text-indigo-400 tracking-wider">
+                              {kotId === 'Direct-Order' ? 'Direct Punched' : `KOT: ${kotId.slice(-6).toUpperCase()}`}
+                            </p>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            {kTimeStr && (
+                              <span className="text-[8px] font-bold text-slate-500 font-mono">
+                                {kTimeStr}
+                              </span>
+                            )}
+                            {!isGroupCompleted && (
+                              <button
+                                onClick={() => markKOTReady(order.id, originalIndices)}
+                                className="px-2 py-1 bg-indigo-600/20 border border-indigo-500/25 text-indigo-400 rounded-lg hover:bg-indigo-650 hover:text-white transition-all flex items-center justify-center gap-1 text-[8px] font-black uppercase tracking-wider"
+                                title="Mark Entire Ticket Ready"
+                              >
+                                <CheckCircle size={10} />
+                                Ready
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                           <div className="flex items-center justify-between gap-2">
-                              <p className={`text-sm font-bold uppercase tracking-tight transition-all ${item.status === 'ready' ? 'text-slate-500 line-through' : 'text-white'}`}>
-                                {item.itemName}
-                              </p>
-                              {item.status !== 'ready' && (
-                                <button 
-                                  onClick={() => updateItemStatus(order.id, idx, 'ready')}
-                                  className="opacity-0 group-hover:opacity-100 p-1 bg-slate-800 rounded-lg hover:text-emerald-400 transition-all"
-                                >
-                                  <CheckCircle size={14} />
-                                </button>
-                              )}
-                           </div>
-                           {item.notes && <p className="text-[10px] text-amber-500 font-bold mt-1 bg-amber-500/5 px-2 py-1 rounded inline-block">{item.notes}</p>}
+
+                        {/* KOT Items */}
+                        <div className="space-y-3">
+                          {groupItems.map((item: any, gItemIdx: number) => {
+                            const originalIdx = originalIndices[gItemIdx];
+                            const isReady = item.status === 'ready';
+
+                            return (
+                              <div key={gItemIdx} className="flex items-start gap-4 group">
+                                <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-black shrink-0 transition-colors ${isReady ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
+                                  {item.quantity}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className={`text-xs font-bold uppercase tracking-tight transition-all ${isReady ? 'text-slate-500 line-through' : 'text-white'}`}>
+                                      {item.itemName}
+                                    </p>
+                                    {!isReady && (
+                                      <button 
+                                        onClick={() => updateItemStatus(order.id, originalIdx, 'ready')}
+                                        className="opacity-0 group-hover:opacity-100 p-1 bg-slate-800 rounded-lg hover:text-emerald-400 transition-all"
+                                      >
+                                        <CheckCircle size={12} />
+                                      </button>
+                                    )}
+                                  </div>
+                                  {item.notes && <p className="text-[9px] text-amber-500 font-bold mt-1 bg-amber-500/5 px-2 py-0.5 rounded inline-block">{item.notes}</p>}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                     </div>
-                   ))}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Card Footer */}

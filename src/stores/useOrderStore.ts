@@ -11,6 +11,22 @@ import {
 import { handleFirestoreError, OperationType } from '../utils/firestoreErrorHandler';
 import { toast } from 'sonner';
 
+// Robust safety helper to avoid "No document to update" on tables
+async function safeUpdateTableDoc(tableId: string | undefined, data: any) {
+  if (!tableId) return;
+  try {
+    const tableRef = doc(db, 'tables', tableId);
+    const snap = await getDoc(tableRef);
+    if (snap.exists()) {
+      await updateDoc(tableRef, data);
+    } else {
+      console.warn(`[safeUpdateTableDoc] Table document with ID "${tableId}" not found in Firestore. Skipping status update.`);
+    }
+  } catch (err) {
+    console.error(`[safeUpdateTableDoc] Error updating table ${tableId}:`, err);
+  }
+}
+
 import { useAuthStore } from './useAuthStore';
 
 export interface OrderItem {
@@ -48,12 +64,15 @@ export interface Order {
   finalAmount: number;
   paymentMethod?: 'CASH' | 'CARD' | 'UPI' | 'MIXED' | 'OTHER';
   payments?: { method: 'CASH' | 'CARD' | 'UPI', amount: number }[];
-  orderStatus: 'pending' | 'running' | 'billed' | 'completed' | 'cancelled' | 'generated' | 'deleted';
-  paymentStatus?: 'paid' | 'unpaid' | 'partial';
+  orderStatus: 'pending' | 'running' | 'RUNNING' | 'billed' | 'completed' | 'cancelled' | 'generated' | 'deleted' | 'BILL_GENERATED' | 'COMPLETED' | 'KOT_SERVED' | 'READY' | 'GENERATED' | 'PENDING_PAYMENT';
+  paymentStatus?: 'paid' | 'unpaid' | 'UNPAID' | 'partial' | 'PENDING' | 'PAID';
+  billingStatus?: 'PENDING_SETTLEMENT' | 'SETTLED' | 'WAITING_SETTLEMENT' | string;
+  tableStatus?: 'AVAILABLE' | 'BILLING' | string;
   kotStatus?: 'pending' | 'sent';
   paidAmount?: number;
   balanceAmount?: number;
   billed?: boolean;
+  billNumber?: string;
   lastBillId?: string;
   orderNotes?: string;
   cancellationReason?: string;
@@ -155,16 +174,16 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       // 2. Update order back to running
       const orderRef = doc(db, 'orders', billData.orderId);
       await updateDoc(orderRef, {
-        orderStatus: 'running',
+        orderStatus: 'RUNNING',
         billed: false,
-        paymentStatus: 'unpaid',
+        paymentStatus: 'UNPAID',
         billedAt: null,
         lastBillId: null,
         updatedAt: serverTimestamp()
       });
 
       // 3. Update table back to running
-      await updateDoc(doc(db, 'tables', billData.tableId), {
+      await safeUpdateTableDoc(billData.tableId, {
         status: 'running'
       });
 
@@ -213,7 +232,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       });
 
       // 2. Free Table
-      await updateDoc(doc(db, 'tables', billData.tableId), {
+      await safeUpdateTableDoc(billData.tableId, {
         status: 'available',
         currentOrderId: null
       });
@@ -259,13 +278,13 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       const order = snap.data();
 
       await updateDoc(orderRef, {
-        orderStatus: 'running',
+        orderStatus: 'RUNNING',
         billed: false,
-        paymentStatus: 'unpaid',
+        paymentStatus: 'UNPAID',
         updatedAt: serverTimestamp()
       });
 
-      await updateDoc(doc(db, 'tables', order.tableId), {
+      await safeUpdateTableDoc(order.tableId, {
         status: 'running'
       });
 
@@ -363,8 +382,9 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         restaurantId: profile.restaurantId,
         items: cart, // For simplicity using cart
         subtotal: cart.reduce((sum, i) => sum + (i.price * i.quantity), 0),
-        orderStatus: 'running',
-        paymentStatus: 'unpaid',
+        totalAmount: cart.reduce((sum, i) => sum + (i.price * i.quantity), 0),
+        orderStatus: 'RUNNING',
+        paymentStatus: 'UNPAID',
         timestamp: new Date(),
         updatedAt: new Date(),
         synced: 0
@@ -374,6 +394,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       await dbLocal.orders.put({
         ...newOrderData,
         total: newOrderData.subtotal,
+        totalAmount: newOrderData.subtotal,
         tax: 0,
         synced: 0
       });
@@ -390,6 +411,15 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         items: cart,
         requestedBy: profile.name || 'Captain'
       });
+
+      // 3.5 Update table status to running instantly in Firestore so it locks and displays correctly
+      if (currentTable) {
+        await safeUpdateTableDoc(currentTable.id, {
+          status: 'running',
+          currentOrderId: orderId,
+          lastOrderAt: serverTimestamp()
+        });
+      }
 
       // 4. Attempt Sync to Cloud
       syncService.pushOrder(orderId);
@@ -483,7 +513,11 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     // Only load non-cancelled items into cart for editing
     const cart = order.items
       .filter(i => i.status !== 'cancelled')
-      .map(i => ({ ...i, status: 'pending' as const })); 
+      .map(i => ({ 
+        ...i, 
+        status: 'pending' as const, 
+        lastPrintedQuantity: i.quantity 
+      })); 
     set({ cart, currentOrder: order, currentTable: { id: order.tableId, number: order.tableNumber } });
   },
 
@@ -500,6 +534,19 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       }
 
       if (!order) throw new Error("Order not found");
+      
+      const statusUpper = (order.orderStatus || '').toUpperCase();
+      const isAlreadyGenerated = ['BILLED', 'BILL_GENERATED', 'GENERATED', 'PENDING_PAYMENT'].includes(statusUpper) || order.billed || !!order.billNumber;
+
+      if (isAlreadyGenerated) {
+        console.log("DEBUG: Bill already exists or order status indicates it is already generated. Reusing existing bill.", {
+          orderStatus: order.orderStatus,
+          billNumber: order.billNumber,
+          lastBillId: order.lastBillId
+        });
+        set({ sessionState: 'billing' });
+        return;
+      }
       
       if (order.orderStatus === 'cancelled') {
         toast.error("Cannot generate bill for a cancelled order");
@@ -529,27 +576,33 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         discountAmount: details.discountAmount,
         serviceChargeAmount: details.serviceChargeAmount,
         finalAmount,
-        paymentStatus: 'unpaid',
+        paymentStatus: 'PENDING',
         createdAt: serverTimestamp(),
-        status: 'generated'
+        status: 'billed'
       };
 
       const billRef = await addDoc(collection(db, 'bills'), billData);
 
       await updateDoc(orderRef, {
         billed: true,
-        orderStatus: 'generated',
+        orderStatus: 'GENERATED',
+        paymentStatus: 'PENDING',
+        billingStatus: 'WAITING_SETTLEMENT',
+        tableStatus: 'BILLING',
+        billNumber,
         subtotal,
         gstAmount,
         discountAmount: details.discountAmount,
         serviceChargeAmount: details.serviceChargeAmount,
         finalAmount,
+        paidAmount: 0,
+        balanceAmount: finalAmount,
         billedAt: serverTimestamp(),
         lastBillId: billRef.id
       });
 
-      await updateDoc(doc(db, 'tables', order.tableId), {
-        status: 'billed'
+      await safeUpdateTableDoc(order.tableId, {
+        status: 'BILLING'
       });
 
       // Enterprise Audit
@@ -564,12 +617,13 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         orderId,
         tableNumber: order.tableNumber,
         restaurantId: order.restaurantId,
+        items: activeItems,
         total: finalAmount,
         requestedBy: useAuthStore.getState().profile?.name || 'Captain'
       });
 
       set({ sessionState: 'billing' });
-      toast.success('Bill generated successfully');
+      toast.success('Bill generated successfully. Order is now in Pending Bills.');
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `orders/${orderId}`);
       toast.error('Bill generation failed');
@@ -584,14 +638,20 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       if (!orderSnap.exists()) return;
       const orderData = orderSnap.data() as Order;
       
-      const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+      const currentPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+      const existingPaid = orderData.paidAmount || 0;
+      const totalPaidAccumulated = existingPaid + currentPaid;
+      const finalAmount = orderData.finalAmount || orderData.totalAmount;
+      const balanceRemaining = Math.max(0, finalAmount - totalPaidAccumulated);
+      
+      const isComplete = balanceRemaining <= 0;
       const paymentMethod = payments.length > 1 ? 'MIXED' : (payments[0]?.method || 'OTHER');
 
       // Create payment transactions
-      const restaurantId = useAuthStore.getState().profile?.restaurantId;
+      const restaurantId = useAuthStore.getState().profile?.restaurantId || orderData.restaurantId;
       for (const p of payments) {
         await addDoc(collection(db, 'payments'), {
-          billId: orderData.lastBillId,
+          billId: orderData.lastBillId || orderId,
           restaurantId,
           amount: p.amount,
           method: p.method,
@@ -599,61 +659,144 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         });
       }
 
-      await updateDoc(orderRef, {
-        orderStatus: 'completed',
-        paymentStatus: 'paid',
-        paymentMethod,
-        payments,
-        paidAmount: totalPaid,
-        completedAt: serverTimestamp()
-      });
+      const mergedPayments = [...(orderData.payments || []), ...payments];
 
-      if (orderData.lastBillId) {
-        await updateDoc(doc(db, 'bills', orderData.lastBillId), {
-          paymentStatus: 'paid',
+      if (isComplete) {
+        await updateDoc(orderRef, {
+          orderStatus: 'COMPLETED',
+          paymentStatus: 'PAID',
+          billingStatus: 'SETTLED',
+          tableStatus: 'AVAILABLE',
           paymentMethod,
-          paidAmount: totalPaid,
-          settledAt: serverTimestamp(),
-          status: 'paid'
+          payments: mergedPayments,
+          paidAmount: finalAmount,
+          balanceAmount: 0,
+          completedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
         });
+
+        if (orderData.lastBillId) {
+          await updateDoc(doc(db, 'bills', orderData.lastBillId), {
+            paymentStatus: 'PAID',
+            paymentMethod,
+            paidAmount: finalAmount,
+            settledAt: serverTimestamp(),
+            status: 'paid'
+          });
+        }
+
+        await safeUpdateTableDoc(tableId, {
+          status: 'available',
+          currentOrderId: null
+        });
+
+        // Enterprise Audit
+        await auditService.log(restaurantId!, 'SYNC_TRIGGERED', `Payment settled for Table ${orderData.tableNumber}`, {
+          amount: finalAmount,
+          method: paymentMethod
+        });
+
+        toast.success('Table cleared & payment fully settled');
+      } else {
+        await updateDoc(orderRef, {
+          orderStatus: 'GENERATED',
+          paymentStatus: 'PENDING',
+          billingStatus: 'WAITING_SETTLEMENT',
+          tableStatus: 'BILLING',
+          paymentMethod,
+          payments: mergedPayments,
+          paidAmount: totalPaidAccumulated,
+          balanceAmount: balanceRemaining,
+          updatedAt: serverTimestamp()
+        });
+
+        if (orderData.lastBillId) {
+          await updateDoc(doc(db, 'bills', orderData.lastBillId), {
+            paymentStatus: 'partial',
+            paymentMethod,
+            paidAmount: totalPaidAccumulated,
+            status: 'billed'
+          });
+        }
+
+        await safeUpdateTableDoc(tableId, {
+          status: 'BILLING'
+        });
+
+        toast.success(`Partial payment of ₹${currentPaid} registered. ₹${balanceRemaining} remaining.`);
       }
-
-      await updateDoc(doc(db, 'tables', tableId), {
-        status: 'available',
-        currentOrderId: null
-      });
-
-      // Enterprise Audit
-      await auditService.log(restaurantId!, 'SYNC_TRIGGERED', `Payment settled for Table ${orderData.tableNumber}`, {
-        amount: totalPaid,
-        method: paymentMethod
-      });
-
-      toast.success('Table cleared & payment settled');
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `orders/${orderId}`);
     }
   },
 
   cancelOrder: async (orderId, reason) => {
+    let isBilled = false;
     try {
       const orderRef = doc(db, 'orders', orderId);
       const order = get().activeOrders.find(o => o.id === orderId);
       if (!order) return;
 
-      await updateDoc(orderRef, {
-        orderStatus: 'cancelled',
-        cancellationReason: reason,
-        updatedAt: serverTimestamp()
-      });
+      const statusUpper = (order.orderStatus || '').toUpperCase();
+      isBilled = ['BILLED', 'BILL_GENERATED', 'GENERATED', 'PENDING_PAYMENT'].includes(statusUpper) || !!order.billed;
 
-      await updateDoc(doc(db, 'tables', order.tableId), {
+      // 1. Void invoice if present
+      if (isBilled && order.lastBillId) {
+        const billRef = doc(db, 'bills', order.lastBillId);
+        try {
+          const billSnap = await getDoc(billRef);
+          if (billSnap.exists()) {
+            const billData = billSnap.data();
+            // Move to cancelledBills for archiving/auditing
+            await addDoc(collection(db, 'cancelledBills'), {
+              ...billData,
+              status: 'cancelled',
+              cancelledBy: useAuthStore.getState().profile?.name || 'Unknown',
+              cancelledByUid: auth.currentUser?.uid,
+              cancelledAt: serverTimestamp(),
+              reason
+            });
+
+            // Update status in bills collection
+            await updateDoc(billRef, {
+              status: 'cancelled',
+              paymentStatus: 'VOID',
+              cancelledBy: useAuthStore.getState().profile?.name || 'Unknown',
+              cancelledAt: serverTimestamp(),
+              reason
+            });
+          }
+        } catch (billErr) {
+          console.error("Error voiding bill document:", billErr);
+        }
+      }
+
+      // 2. Mark order status
+      if (isBilled) {
+        await updateDoc(orderRef, {
+          orderStatus: 'CANCELLED',
+          paymentStatus: 'VOID',
+          billingStatus: 'VOIDED',
+          tableStatus: 'AVAILABLE',
+          cancellationReason: reason,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        await updateDoc(orderRef, {
+          orderStatus: 'cancelled',
+          cancellationReason: reason,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      // 3. Free table
+      await safeUpdateTableDoc(order.tableId, {
         status: 'available',
         currentOrderId: null
       });
 
       // Enterprise Audit
-      await auditService.log(order.restaurantId, 'ORDER_CANCELLED', `Full order cancelled for Table ${order.tableNumber}`, {
+      await auditService.log(order.restaurantId, 'ORDER_CANCELLED', isBilled ? `Bill voided & order cancelled for Table ${order.tableNumber}` : `Full order cancelled for Table ${order.tableNumber}`, {
         reason,
         amount: order.totalAmount
       });
@@ -664,15 +807,21 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         tableNumber: order.tableNumber,
         restaurantId: order.restaurantId,
         cancellationReason: reason,
-        cancellationType: 'Full Order Cancel',
+        cancellationType: isBilled ? 'Bill Void' : 'Full Order Cancel',
         orderTotalBefore: order.totalAmount,
         orderTotalAfter: 0
       });
 
-      toast.success('Order cancelled successfully');
+      // Toast feedback
+      if (isBilled) {
+        toast.success('Bill voided and order cancelled');
+      } else {
+        toast.success('Order cancelled successfully');
+      }
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `orders/${orderId}`);
-      toast.error('Failed to cancel order');
+      toast.error(isBilled ? 'Unable to cancel billed order' : 'Failed to cancel order');
+      throw e;
     }
   },
 
@@ -688,14 +837,14 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       });
 
       // 2. Set target table to running
-      await updateDoc(doc(db, 'tables', targetTableId), {
+      await safeUpdateTableDoc(targetTableId, {
         status: 'running',
         currentOrderId: orderId,
         lastOrderAt: serverTimestamp()
       });
 
       // 3. Set source table to available
-      await updateDoc(doc(db, 'tables', sourceTableId), {
+      await safeUpdateTableDoc(sourceTableId, {
         status: 'available',
         currentOrderId: null
       });
@@ -747,7 +896,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       });
 
       // 4. Free source table
-      await updateDoc(doc(db, 'tables', sourceOrder.tableId), {
+      await safeUpdateTableDoc(sourceOrder.tableId, {
         status: 'available',
         currentOrderId: null
       });
@@ -805,16 +954,16 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     const q = query(
       collection(db, 'orders'), 
       where('restaurantId', '==', profile.restaurantId),
-      where('orderStatus', 'in', ['running', 'billed', 'generated'])
+      where('orderStatus', 'in', ['running', 'RUNNING', 'billed', 'generated', 'BILL_GENERATED', 'KOT_SERVED', 'READY', 'GENERATED', 'PENDING_PAYMENT'])
     );
     return onSnapshot(q, (snapshot) => {
       const activeOrders = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Order))
-        .sort((a, b) => {
-          const tA = a.timestamp?.seconds || 0;
-          const tB = b.timestamp?.seconds || 0;
-          return tB - tA;
-        });
+         .map(doc => ({ id: doc.id, ...doc.data() } as Order))
+         .sort((a, b) => {
+           const tA = a.timestamp?.seconds || 0;
+           const tB = b.timestamp?.seconds || 0;
+           return tB - tA;
+         });
       set({ activeOrders, loading: false });
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'orders');

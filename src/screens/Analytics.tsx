@@ -32,7 +32,7 @@ const Analytics = () => {
     const q = query(
       collection(db, 'orders'),
       where('restaurantId', '==', profile.restaurantId),
-      where('orderStatus', 'in', ['completed', 'billed']),
+      where('orderStatus', 'in', ['completed', 'COMPLETED', 'billed', 'BILL_GENERATED']),
       orderBy('timestamp', 'desc')
     );
 
@@ -47,7 +47,7 @@ const Analytics = () => {
     const qCancelled = query(
       collection(db, 'orders'),
       where('restaurantId', '==', profile.restaurantId),
-      where('orderStatus', '==', 'cancelled'),
+      where('orderStatus', 'in', ['cancelled', 'CANCELLED']),
       orderBy('timestamp', 'desc')
     );
 
